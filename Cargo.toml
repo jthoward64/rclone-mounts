@@ -20,6 +20,12 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tracing = "0.1"
+nom = "7"
+libsystemd = "0.7"
+
+# Test
+tempfile = "3"
+pretty_assertions = "1"
 
 # D-Bus and async (smol-based; no tokio)
 zbus = { version = "5", default-features = false, features = ["async-io"] }

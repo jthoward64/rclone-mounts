@@ -12,7 +12,7 @@ pub enum CacheMode {
     Full,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MountOptions {
     pub cache_mode: CacheMode,
     pub cache_max_size_mb: Option<u64>,
@@ -33,7 +33,7 @@ impl Default for MountOptions {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mount {
     pub name: String,
     pub source: String,

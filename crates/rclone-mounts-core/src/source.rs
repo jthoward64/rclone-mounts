@@ -24,7 +24,7 @@ pub struct Source {
 /// Pending-state definition: how the UI describes a desired source. `new_secret` is
 /// `Some(value)` only when the user is setting or rotating it; `None` means leave the
 /// stored credential untouched.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceDef {
     pub name: String,
     pub kind: SourceKind,

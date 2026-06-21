@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-pub mod helper;
 pub mod local;
 
 use crate::Result;
@@ -19,4 +18,10 @@ pub trait UnitStore: Send + Sync {
 
     fn read_sources_conf(&self) -> Result<String>;
     fn write_sources_conf(&self, contents: &str) -> Result<()>;
+
+    /// Read the KCM's mount-state file. Returns empty string if the file
+    /// doesn't exist yet (first run). The format is TOML; deserialization is
+    /// the caller's job so the trait stays serde-free.
+    fn read_mounts_state(&self) -> Result<String>;
+    fn write_mounts_state(&self, contents: &str) -> Result<()>;
 }
