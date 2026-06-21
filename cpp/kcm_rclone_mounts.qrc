@@ -1,0 +1,6 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <qresource prefix="/kcm/kcm_rclone_mounts">
+    <file>main.qml</file>
+  </qresource>
+</RCC>

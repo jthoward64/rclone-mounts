@@ -1,0 +1,23 @@
+[package]
+name = "rclone-mounts-kcm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Plasma KCM frontend for rclone-mounts. cxx-qt bridge + Kirigami QML."
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+rclone-mounts-core.workspace = true
+cxx.workspace = true
+cxx-qt.workspace = true
+cxx-qt-lib.workspace = true
+cxx-qt-lib-extras = "0.8"
+cxx-kde-frameworks.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+cxx-qt-build.workspace = true

@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rclone-mounts-core",
+    "crates/rclone-mounts-kcm",
+    "crates/rclone-mounts-helper",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "GPL-2.0-or-later"
+repository = "https://invent.kde.org/...placeholder..."
+authors = ["Tag Howard <tag@jthoward.dev>"]
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Core
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+
+# D-Bus and async (smol-based; no tokio)
+zbus = { version = "5", default-features = false, features = ["async-io"] }
+async-trait = "0.1"
+futures-util = { version = "0.3", default-features = false }
+
+# HTTP to rclone rc (blocking, on a worker thread)
+ureq = { version = "2", default-features = false, features = ["json"] }
+
+# Qt bindings (KCM crate only). cxx-kde-frameworks tracks cxx-qt 0.8.
+cxx = "1"
+cxx-qt = "0.8"
+cxx-qt-lib = { version = "0.8", features = ["qt_full"] }
+cxx-qt-build = { version = "0.8", features = ["link_qt_object_files"] }
+# TODO: pin to a specific rev once we've verified a working version.
+cxx-kde-frameworks = { git = "https://invent.kde.org/libraries/cxx-kde-frameworks.git", branch = "master" }
+
+# Internal
+rclone-mounts-core = { path = "crates/rclone-mounts-core" }

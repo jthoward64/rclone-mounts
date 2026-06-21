@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Service
+TryExec=rclone
+Exec=kcmshell6 kcm_rclone_mounts
+Icon=folder-cloud-symbolic
+Categories=Qt;KDE;X-KDE-settings-network;
+X-KDE-ServiceTypes=KCModule
+X-KDE-Library=plasma/kcms/kcm_rclone_mounts
+X-KDE-ParentApp=kcontrol
+X-KDE-System-Settings-Parent-Category=network
+
+Name=rclone Mounts
+Comment=Manage rclone-backed mounts (SMB, Drive, WebDAV)

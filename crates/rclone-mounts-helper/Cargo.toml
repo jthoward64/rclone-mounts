@@ -1,0 +1,21 @@
+[package]
+name = "rclone-mounts-helper"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "System D-Bus service for privileged file I/O. Bounded API, Polkit-authorized."
+
+[[bin]]
+name = "rclone-mounts-helper"
+path = "src/main.rs"
+
+[dependencies]
+rclone-mounts-core.workspace = true
+zbus.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-io = "2"

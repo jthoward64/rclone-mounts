@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=dev.jthoward.RcloneMounts.Helper
+Exec=/usr/libexec/rclone-mounts-helper
+User=root
+SystemdService=rclone-mounts-helper.service

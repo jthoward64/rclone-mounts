@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>rclone-mounts</vendor>
+  <vendor_url>https://invent.kde.org/...placeholder...</vendor_url>
+
+  <action id="dev.jthoward.rclone-mounts.read-system">
+    <description>Read system-wide rclone-mounts configuration</description>
+    <message>Authentication is required to view system-wide rclone mounts.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="dev.jthoward.rclone-mounts.modify-system">
+    <description>Modify system-wide rclone-mounts configuration</description>
+    <message>Authentication is required to change system-wide rclone mounts.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+</policyconfig>
