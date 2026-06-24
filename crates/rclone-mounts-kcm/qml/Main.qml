@@ -308,58 +308,65 @@ KCM.SimpleKCM {
 
         title: editing ? i18n("Edit source") : i18n("Add source")
 
-        Kirigami.FormLayout {
-            id: sourceForm
+        // Bound width: an OverlaySheet sizes to its content, so a fillWidth
+        // child (the InlineMessage) would otherwise collapse the sheet to 0.
+        ColumnLayout {
+            implicitWidth: Kirigami.Units.gridUnit * 26
 
-            QQC2.TextField {
-                id: srcNameField
-                Kirigami.FormData.label: i18n("Name:")
-                enabled: sourceEditor.editing === null
-                placeholderText: i18n("e.g. work-share")
-            }
-            QQC2.ComboBox {
-                id: kindBox
-                Kirigami.FormData.label: i18n("Type:")
-                // Changing the type of an existing source rewrites its whole
-                // section; lock it on edit to avoid silent data loss.
-                enabled: sourceEditor.editing === null
-                model: root.sourceKinds
-                textRole: "label"
-                valueRole: "tag"
-            }
-
-            Kirigami.InlineMessage {
-                Kirigami.FormData.isSection: true
+            Kirigami.FormLayout {
+                id: sourceForm
                 Layout.fillWidth: true
-                visible: !sourceEditor.kindSupported
-                type: Kirigami.MessageType.Information
-                text: i18n("Google Drive needs an OAuth sign-in flow that isn't wired up yet.")
-            }
 
-            // Per-kind connection fields, driven by sourceSchemas.
-            Repeater {
-                id: fieldsRepeater
-                model: root.sourceSchemas[sourceEditor.currentKind] || []
-                delegate: QQC2.TextField {
-                    required property var modelData
-                    property string fieldKey: modelData.key
-                    Kirigami.FormData.label: modelData.label
-                    placeholderText: modelData.placeholder || ""
-                    Component.onCompleted: {
-                        if (sourceEditor.editing && sourceEditor.editing.options)
-                            text = sourceEditor.editing.options[fieldKey] || "";
+                QQC2.TextField {
+                    id: srcNameField
+                    Kirigami.FormData.label: i18n("Name:")
+                    enabled: sourceEditor.editing === null
+                    placeholderText: i18n("e.g. work-share")
+                }
+                QQC2.ComboBox {
+                    id: kindBox
+                    Kirigami.FormData.label: i18n("Type:")
+                    // Changing the type of an existing source rewrites its whole
+                    // section; lock it on edit to avoid silent data loss.
+                    enabled: sourceEditor.editing === null
+                    model: root.sourceKinds
+                    textRole: "label"
+                    valueRole: "tag"
+                }
+
+                Kirigami.InlineMessage {
+                    Kirigami.FormData.isSection: true
+                    Layout.fillWidth: true
+                    visible: !sourceEditor.kindSupported
+                    type: Kirigami.MessageType.Information
+                    text: i18n("Google Drive needs an OAuth sign-in flow that isn't wired up yet.")
+                }
+
+                // Per-kind connection fields, driven by sourceSchemas.
+                Repeater {
+                    id: fieldsRepeater
+                    model: root.sourceSchemas[sourceEditor.currentKind] || []
+                    delegate: QQC2.TextField {
+                        required property var modelData
+                        property string fieldKey: modelData.key
+                        Kirigami.FormData.label: modelData.label
+                        placeholderText: modelData.placeholder || ""
+                        Component.onCompleted: {
+                            if (sourceEditor.editing && sourceEditor.editing.options)
+                                text = sourceEditor.editing.options[fieldKey] || "";
+                        }
                     }
                 }
-            }
 
-            QQC2.TextField {
-                id: secretField
-                visible: sourceEditor.kindSupported
-                Kirigami.FormData.label: i18n("Password:")
-                echoMode: TextInput.Password
-                placeholderText: (sourceEditor.editing && sourceEditor.editing.has_secret)
-                    ? i18n("•••• (leave blank to keep)")
-                    : i18n("required")
+                QQC2.TextField {
+                    id: secretField
+                    visible: sourceEditor.kindSupported
+                    Kirigami.FormData.label: i18n("Password:")
+                    echoMode: TextInput.Password
+                    placeholderText: (sourceEditor.editing && sourceEditor.editing.has_secret)
+                        ? i18n("•••• (leave blank to keep)")
+                        : i18n("required")
+                }
             }
         }
 
@@ -412,28 +419,34 @@ KCM.SimpleKCM {
 
         title: editing ? i18n("Edit mount") : i18n("Add mount")
 
-        Kirigami.FormLayout {
-            QQC2.TextField {
-                id: nameField
-                Kirigami.FormData.label: i18n("Name:")
-                // The name is the unit key; lock it when editing.
-                enabled: mountEditor.editing === null
-                placeholderText: i18n("e.g. work-files")
-            }
-            QQC2.ComboBox {
-                id: sourceBox
-                Kirigami.FormData.label: i18n("Source:")
-                model: root.sources
-                textRole: "name"
-            }
-            QQC2.TextField {
-                id: mountpointField
-                Kirigami.FormData.label: i18n("Mount point:")
-                placeholderText: i18n("e.g. ~/Mounts/work")
-            }
-            QQC2.CheckBox {
-                id: enabledBox
-                Kirigami.FormData.label: i18n("Start at login:")
+        ColumnLayout {
+            implicitWidth: Kirigami.Units.gridUnit * 26
+
+            Kirigami.FormLayout {
+                Layout.fillWidth: true
+
+                QQC2.TextField {
+                    id: nameField
+                    Kirigami.FormData.label: i18n("Name:")
+                    // The name is the unit key; lock it when editing.
+                    enabled: mountEditor.editing === null
+                    placeholderText: i18n("e.g. work-files")
+                }
+                QQC2.ComboBox {
+                    id: sourceBox
+                    Kirigami.FormData.label: i18n("Source:")
+                    model: root.sources
+                    textRole: "name"
+                }
+                QQC2.TextField {
+                    id: mountpointField
+                    Kirigami.FormData.label: i18n("Mount point:")
+                    placeholderText: i18n("e.g. ~/Mounts/work")
+                }
+                QQC2.CheckBox {
+                    id: enabledBox
+                    Kirigami.FormData.label: i18n("Start at login:")
+                }
             }
         }
 
