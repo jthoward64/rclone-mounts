@@ -34,3 +34,6 @@ ui_*.h
 
 # Auto-generated conversation summary
 status.txt
+
+# Local webdav test-server backing store
+test/
