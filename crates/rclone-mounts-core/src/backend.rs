@@ -34,6 +34,23 @@ use std::fmt::Write as _;
 pub trait Backend: Send + Sync {
     async fn load(&self) -> Result<State>;
     async fn apply(&self, changeset: Changeset) -> Result<()>;
+
+    // Live mount lifecycle. Deliberately separate from `apply`/the dirty model:
+    // these act immediately on the already-applied units and don't participate
+    // in Apply/Cancel. They go through the `Backend` abstraction (not a raw
+    // `SystemdControl`) so system-scope can proxy them to the helper, which owns
+    // the privileged systemd.
+    async fn start_mount(&self, name: &str) -> Result<()>;
+    async fn stop_mount(&self, name: &str) -> Result<()>;
+    /// systemd `ActiveState` for the mount's unit: `active`, `inactive`,
+    /// `failed`, `activating`, …
+    async fn mount_status(&self, name: &str) -> Result<String>;
+}
+
+/// The systemd unit name backing a mount. Single source of truth for the
+/// `rclone-mount-<name>.service` convention shared by the writer and control.
+pub fn mount_unit_name(name: &str) -> String {
+    format!("rclone-mount-{name}.service")
 }
 
 /// Snapshot of what's currently on disk for this scope.
@@ -236,6 +253,21 @@ impl Backend for LocalBackend {
         self.control.reload().await?;
         Ok(())
     }
+
+    async fn start_mount(&self, name: &str) -> Result<()> {
+        unit_writer::validate_name(name)?;
+        self.control.start(&mount_unit_name(name)).await
+    }
+
+    async fn stop_mount(&self, name: &str) -> Result<()> {
+        unit_writer::validate_name(name)?;
+        self.control.stop(&mount_unit_name(name)).await
+    }
+
+    async fn mount_status(&self, name: &str) -> Result<String> {
+        unit_writer::validate_name(name)?;
+        self.control.active_state(&mount_unit_name(name)).await
+    }
 }
 
 /// zbus client backend that forwards everything to the helper. Used by the KCM
@@ -297,6 +329,26 @@ impl Backend for HelperBackend {
         let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
         let _: () = proxy.call("ApplyChanges", &(encoded,)).await?;
         Ok(())
+    }
+
+    // The helper owns the system-bus systemd; it constructs the unit name and
+    // runs the action under its own privilege. (Helper-side methods land with
+    // system-mode wiring.)
+    async fn start_mount(&self, name: &str) -> Result<()> {
+        let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
+        let _: () = proxy.call("StartMount", &(name,)).await?;
+        Ok(())
+    }
+
+    async fn stop_mount(&self, name: &str) -> Result<()> {
+        let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
+        let _: () = proxy.call("StopMount", &(name,)).await?;
+        Ok(())
+    }
+
+    async fn mount_status(&self, name: &str) -> Result<String> {
+        let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
+        Ok(proxy.call("MountStatus", &(name,)).await?)
     }
 }
 

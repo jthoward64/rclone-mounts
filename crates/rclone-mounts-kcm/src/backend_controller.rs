@@ -88,6 +88,20 @@ mod ffi {
         /// Stage a source for deletion (or drop a pending create).
         #[qinvokable]
         fn remove_source(self: Pin<&mut BackendController>, name: &QString);
+
+        /// Start a mount's unit now (live action, independent of Apply). Only
+        /// valid for mounts that already exist on disk.
+        #[qinvokable]
+        fn start_mount(self: Pin<&mut BackendController>, name: &QString);
+
+        /// Stop a mount's unit now (live action, independent of Apply).
+        #[qinvokable]
+        fn stop_mount(self: Pin<&mut BackendController>, name: &QString);
+
+        /// Re-query the active state of every applied mount and refresh the
+        /// model. Cheap enough for the UI to poll on a timer.
+        #[qinvokable]
+        fn refresh_status(self: Pin<&mut BackendController>);
     }
 }
 
@@ -115,26 +129,22 @@ pub struct BackendControllerRust {
     pending: Changeset,
     /// User-scope backend, built lazily on first successful load.
     backend: Option<Box<dyn Backend>>,
+    /// Live systemd ActiveState per applied mount name, refreshed on load,
+    /// after start/stop, and on the UI's poll timer.
+    statuses: BTreeMap<String, String>,
 }
 
 /// UI-facing projection of a mount. Shape is what the QML delegate consumes.
+/// `active` is the systemd ActiveState (or "unsaved" for a pending-create
+/// mount with no unit yet); `applied` gates the Start/Stop controls.
 #[derive(Serialize)]
 struct MountView {
     name: String,
     source: String,
     mountpoint: String,
     enabled: bool,
-}
-
-impl From<&Mount> for MountView {
-    fn from(m: &Mount) -> Self {
-        Self {
-            name: m.name.clone(),
-            source: m.source.clone(),
-            mountpoint: m.mountpoint.display().to_string(),
-            enabled: m.enabled,
-        }
-    }
+    active: String,
+    applied: bool,
 }
 
 /// UI-facing projection of a source. Carries the full option map so the editor
@@ -208,6 +218,7 @@ impl ffi::BackendController {
                     rust.applied = state;
                     rust.pending = Changeset::default();
                 }
+                self.as_mut().fetch_statuses();
                 self.as_mut().refresh();
             }
             Err(e) => {
@@ -249,6 +260,7 @@ impl ffi::BackendController {
                     rust.applied = state;
                     rust.pending = Changeset::default();
                 }
+                self.as_mut().fetch_statuses();
                 self.as_mut().refresh();
             }
             Err(e) => {
@@ -359,13 +371,105 @@ impl ffi::BackendController {
         self.as_mut().refresh();
     }
 
+    fn start_mount(mut self: Pin<&mut Self>, name: &QString) {
+        self.as_mut().lifecycle(name, true);
+    }
+
+    fn stop_mount(mut self: Pin<&mut Self>, name: &QString) {
+        self.as_mut().lifecycle(name, false);
+    }
+
+    fn refresh_status(mut self: Pin<&mut Self>) {
+        self.as_mut().fetch_statuses();
+        self.as_mut().refresh();
+    }
+
+    /// Shared body for start/stop: fire the live action, surface any error,
+    /// then re-read status and refresh the model.
+    fn lifecycle(mut self: Pin<&mut Self>, name: &QString, start: bool) {
+        let name = name.to_string();
+        self.as_mut().set_error_string(QString::default());
+        if self.as_ref().rust().backend.is_none() {
+            self.as_mut()
+                .set_error_string(QString::from("Backend not initialised; reload first."));
+            return;
+        }
+        let result = {
+            let this = self.as_ref();
+            let backend = this.rust().backend.as_ref().unwrap();
+            async_io::block_on(async {
+                if start {
+                    backend.start_mount(&name).await
+                } else {
+                    backend.stop_mount(&name).await
+                }
+            })
+        };
+        if let Err(e) = result {
+            let verb = if start { "start" } else { "stop" };
+            tracing::error!(error = %e, mount = %name, "{verb} failed");
+            self.as_mut()
+                .set_error_string(QString::from(format!("Failed to {verb} {name}: {e}").as_str()));
+        }
+        self.as_mut().fetch_statuses();
+        self.as_mut().refresh();
+    }
+
+    /// Re-query systemd ActiveState for every applied mount. Plain helper (not a
+    /// QML invokable); callers refresh the model afterwards.
+    fn fetch_statuses(mut self: Pin<&mut Self>) {
+        let names: Vec<String> = self
+            .as_ref()
+            .rust()
+            .applied
+            .mounts
+            .iter()
+            .map(|m| m.name.clone())
+            .collect();
+        let mut map = BTreeMap::new();
+        if self.as_ref().rust().backend.is_some() {
+            let this = self.as_ref();
+            let backend = this.rust().backend.as_ref().unwrap();
+            for name in &names {
+                let state = async_io::block_on(backend.mount_status(name))
+                    .unwrap_or_else(|_| "unknown".to_string());
+                map.insert(name.clone(), state);
+            }
+        }
+        self.as_mut().rust_mut().statuses = map;
+    }
+
     /// Recompute the displayed JSON + dirty flag from `applied` + `pending`.
     fn refresh(mut self: Pin<&mut Self>) {
         let (mounts_json, sources_json, dirty) = {
             let this = self.as_ref();
             let rust = this.rust();
             let displayed = rust.applied.preview(&rust.pending);
-            let mounts: Vec<MountView> = displayed.mounts.iter().map(MountView::from).collect();
+            let applied_names: std::collections::HashSet<&str> =
+                rust.applied.mounts.iter().map(|m| m.name.as_str()).collect();
+            let mounts: Vec<MountView> = displayed
+                .mounts
+                .iter()
+                .map(|m| {
+                    let applied = applied_names.contains(m.name.as_str());
+                    let active = if applied {
+                        rust.statuses
+                            .get(&m.name)
+                            .cloned()
+                            .unwrap_or_else(|| "unknown".into())
+                    } else {
+                        "unsaved".into()
+                    };
+                    MountView {
+                        name: m.name.clone(),
+                        source: m.source.clone(),
+                        mountpoint: m.mountpoint.display().to_string(),
+                        enabled: m.enabled,
+                        active,
+                        applied,
+                    }
+                })
+                .collect();
             let sources: Vec<SourceView> = displayed.sources.iter().map(SourceView::from).collect();
             (
                 serde_json::to_string(&mounts).unwrap_or_else(|_| "[]".into()),

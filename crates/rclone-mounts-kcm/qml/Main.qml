@@ -53,6 +53,48 @@ KCM.SimpleKCM {
         return "folder-cloud-symbolic";
     }
 
+    // Map a systemd ActiveState (plus our "unsaved" sentinel) to UI bits.
+    function statusIcon(active) {
+        switch (active) {
+        case "active": return "emblem-success-symbolic";
+        case "activating":
+        case "deactivating": return "view-refresh-symbolic";
+        case "failed": return "emblem-error-symbolic";
+        case "inactive": return "media-playback-stopped-symbolic";
+        case "unsaved": return "document-save-symbolic";
+        default: return "dialog-question-symbolic";
+        }
+    }
+    function statusText(active) {
+        switch (active) {
+        case "active": return i18n("Mounted");
+        case "activating": return i18n("Mounting…");
+        case "deactivating": return i18n("Unmounting…");
+        case "failed": return i18n("Failed");
+        case "inactive": return i18n("Stopped");
+        case "unsaved": return i18n("Not applied");
+        default: return i18n("Unknown");
+        }
+    }
+    function statusColor(active) {
+        switch (active) {
+        case "active": return Kirigami.Theme.positiveTextColor;
+        case "failed": return Kirigami.Theme.negativeTextColor;
+        default: return Kirigami.Theme.disabledTextColor;
+        }
+    }
+    function isRunning(active) {
+        return active === "active" || active === "activating";
+    }
+
+    // Poll live mount status while the My mounts tab is showing applied mounts.
+    Timer {
+        interval: 3000
+        repeat: true
+        running: tabs.currentIndex === 0 && root.mounts.length > 0
+        onTriggered: backend.refreshStatus()
+    }
+
     // The C++ shim emits these in response to the KCM's Apply/Reset/load.
     Connections {
         target: kcm
@@ -234,10 +276,9 @@ KCM.SimpleKCM {
                             Kirigami.Icon {
                                 implicitWidth: Kirigami.Units.iconSizes.small
                                 implicitHeight: Kirigami.Units.iconSizes.small
-                                source: item.modelData.enabled
-                                    ? "media-playback-start-symbolic"
-                                    : "media-playback-stopped-symbolic"
-                                opacity: item.modelData.enabled ? 1.0 : 0.5
+                                source: root.statusIcon(item.modelData.active)
+                                color: root.statusColor(item.modelData.active)
+                                isMask: true
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -255,9 +296,26 @@ KCM.SimpleKCM {
                                     font: Kirigami.Theme.smallFont
                                 }
                             }
+                            QQC2.Label {
+                                text: root.statusText(item.modelData.active)
+                                color: root.statusColor(item.modelData.active)
+                                font: Kirigami.Theme.smallFont
+                            }
                         }
 
                         actions: [
+                            Kirigami.Action {
+                                icon.name: "media-playback-start-symbolic"
+                                text: i18n("Start")
+                                visible: item.modelData.applied && !root.isRunning(item.modelData.active)
+                                onTriggered: backend.startMount(item.modelData.name)
+                            },
+                            Kirigami.Action {
+                                icon.name: "media-playback-stop-symbolic"
+                                text: i18n("Stop")
+                                visible: root.isRunning(item.modelData.active)
+                                onTriggered: backend.stopMount(item.modelData.name)
+                            },
                             Kirigami.Action {
                                 icon.name: "document-edit-symbolic"
                                 text: i18n("Edit")

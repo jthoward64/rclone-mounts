@@ -55,7 +55,7 @@ impl LocalUnitStore {
 
     fn unit_path(&self, name: &str) -> Result<PathBuf> {
         validate_name(name)?;
-        Ok(self.unit_dir.join(format!("rclone-mount-{name}.service")))
+        Ok(self.unit_dir.join(crate::backend::mount_unit_name(name)))
     }
 
     fn credential_path(&self, name: &str) -> Result<PathBuf> {
