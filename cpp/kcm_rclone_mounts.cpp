@@ -17,21 +17,19 @@ KCMRcloneMounts::KCMRcloneMounts(QObject *parent, const KPluginMetaData &data)
 void KCMRcloneMounts::load()
 {
     KQuickConfigModule::load();
-    // TODO: forward to BackendController::load() once we have a handle on the root
-    // Rust QObject. cxx-qt registers it as a QML element; we'll either fetch it from
-    // the QML root or hold our own instance and expose it as a context property.
+    Q_EMIT loadRequested();
 }
 
 void KCMRcloneMounts::save()
 {
     KQuickConfigModule::save();
-    // TODO: forward to BackendController::commit()
+    Q_EMIT saveRequested();
 }
 
 void KCMRcloneMounts::defaults()
 {
     KQuickConfigModule::defaults();
-    // TODO: forward to BackendController::reset()
+    Q_EMIT defaultsRequested();
 }
 
 #include "kcm_rclone_mounts.moc"

@@ -18,6 +18,10 @@ cxx-qt-lib.workspace = true
 cxx-qt-lib-extras = "0.8"
 cxx-kde-frameworks.workspace = true
 tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { workspace = true }
+serde_json.workspace = true
+async-io.workspace = true
 
 [build-dependencies]
 cxx-qt-build.workspace = true

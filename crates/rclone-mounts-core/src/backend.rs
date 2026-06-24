@@ -79,6 +79,31 @@ pub struct LocalBackend {
     pub credential_dir_spec: String,
 }
 
+impl LocalBackend {
+    /// Construct the user-scope backend: stores under `$HOME`, session-bus
+    /// systemd control, user-scope credential encryption. This is the path the
+    /// KCM drives directly (no helper, no Polkit) for a user's own mounts.
+    pub async fn new_user() -> Result<Self> {
+        use crate::control::session::SessionSystemd;
+        use crate::store::local::LocalUnitStore;
+        Ok(Self {
+            store: Box::new(LocalUnitStore::new_user_default()?),
+            control: Box::new(SessionSystemd::new().await?),
+            scope: Scope::User,
+            credential_dir_spec: "%h/.config/rclone-mounts/credentials".into(),
+        })
+    }
+}
+
+impl State {
+    /// Fold a changeset onto this state without persisting anything, returning
+    /// what `apply` *would* produce. The KCM uses this to render pending edits
+    /// (the dirty preview) before the user clicks Apply.
+    pub fn preview(&self, cs: &Changeset) -> Result<State> {
+        fold(self.clone(), cs)
+    }
+}
+
 #[async_trait]
 impl Backend for LocalBackend {
     async fn load(&self) -> Result<State> {
