@@ -52,6 +52,12 @@ KCM.SimpleKCM {
             if (sourceKinds[i].tag === tag) return sourceKinds[i].icon;
         return "folder-cloud-symbolic";
     }
+    // Map a source id to its display name for the mount list.
+    function sourceDisplay(id) {
+        for (let i = 0; i < sources.length; i++)
+            if (sources[i].name === id) return sources[i].display_name;
+        return id;
+    }
 
     // Map a systemd ActiveState (plus our "unsaved" sentinel) to UI bits.
     function statusIcon(active) {
@@ -186,7 +192,7 @@ KCM.SimpleKCM {
                                 spacing: 0
                                 QQC2.Label {
                                     Layout.fillWidth: true
-                                    text: srcItem.modelData.name
+                                    text: srcItem.modelData.display_name
                                     elide: Text.ElideRight
                                 }
                                 QQC2.Label {
@@ -285,7 +291,7 @@ KCM.SimpleKCM {
                                 spacing: 0
                                 QQC2.Label {
                                     Layout.fillWidth: true
-                                    text: item.modelData.name
+                                    text: item.modelData.display_name
                                     elide: Text.ElideRight
                                 }
                                 // Status word (colored) + connection, on the
@@ -301,7 +307,7 @@ KCM.SimpleKCM {
                                     }
                                     QQC2.Label {
                                         Layout.fillWidth: true
-                                        text: i18n("· %1 → %2", item.modelData.source, item.modelData.mountpoint)
+                                        text: i18n("· %1 → %2", root.sourceDisplay(item.modelData.source), item.modelData.mountpoint)
                                         elide: Text.ElideMiddle
                                         opacity: 0.7
                                         font: Kirigami.Theme.smallFont
@@ -359,7 +365,7 @@ KCM.SimpleKCM {
 
         function openFor(source) {
             editing = source;
-            srcNameField.text = source ? source.name : "";
+            srcNameField.text = source ? source.display_name : "";
             secretField.text = "";
             // Kind is locked when editing; select it (or default to SMB).
             let kindIdx = 0;
@@ -385,8 +391,7 @@ KCM.SimpleKCM {
                 QQC2.TextField {
                     id: srcNameField
                     Kirigami.FormData.label: i18n("Name:")
-                    enabled: sourceEditor.editing === null
-                    placeholderText: i18n("e.g. work-share")
+                    placeholderText: i18n("e.g. Work share")
                 }
                 QQC2.ComboBox {
                     id: kindBox
@@ -449,7 +454,8 @@ KCM.SimpleKCM {
                     let f = fieldsRepeater.itemAt(i);
                     if (f && f.text.trim().length > 0) opts[f.fieldKey] = f.text.trim();
                 }
-                backend.upsertSource(srcNameField.text.trim(),
+                backend.upsertSource(sourceEditor.editing ? sourceEditor.editing.name : "",
+                                     srcNameField.text.trim(),
                                      sourceEditor.currentKind,
                                      JSON.stringify(opts),
                                      secretField.text);
@@ -468,7 +474,7 @@ KCM.SimpleKCM {
 
         function openFor(mount) {
             editing = mount;
-            nameField.text = mount ? mount.name : "";
+            nameField.text = mount ? mount.display_name : "";
             mountpointField.text = mount ? mount.mountpoint : "";
             enabledBox.checked = mount ? mount.enabled : false;
             // Preselect the mount's source, else the first available.
@@ -493,15 +499,13 @@ KCM.SimpleKCM {
                 QQC2.TextField {
                     id: nameField
                     Kirigami.FormData.label: i18n("Name:")
-                    // The name is the unit key; lock it when editing.
-                    enabled: mountEditor.editing === null
-                    placeholderText: i18n("e.g. work-files")
+                    placeholderText: i18n("e.g. Work files")
                 }
                 QQC2.ComboBox {
                     id: sourceBox
                     Kirigami.FormData.label: i18n("Source:")
                     model: root.sources
-                    textRole: "name"
+                    textRole: "display_name"
                 }
                 QQC2.TextField {
                     id: mountpointField
@@ -520,7 +524,8 @@ KCM.SimpleKCM {
             standardButtons: QQC2.DialogButtonBox.Ok | QQC2.DialogButtonBox.Cancel
             onAccepted: {
                 let src = root.sources[sourceBox.currentIndex];
-                backend.upsertMount(nameField.text.trim(),
+                backend.upsertMount(mountEditor.editing ? mountEditor.editing.name : "",
+                                    nameField.text.trim(),
                                     src ? src.name : "",
                                     mountpointField.text.trim(),
                                     enabledBox.checked);

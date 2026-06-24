@@ -160,6 +160,7 @@ mod tests {
     fn sample_mount() -> Mount {
         Mount {
             name: "work".into(),
+            display_name: "Work".into(),
             source: "office-smb".into(),
             mountpoint: PathBuf::from("/home/alice/Mounts/work"),
             options: MountOptions::default(),

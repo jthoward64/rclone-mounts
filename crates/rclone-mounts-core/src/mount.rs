@@ -35,7 +35,13 @@ impl Default for MountOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mount {
+    /// Internal id: the systemd unit / file key. Slug, validated, immutable.
     pub name: String,
+    /// Freeform name shown in the UI. Defaults to `name` for data written
+    /// before display names existed.
+    #[serde(default)]
+    pub display_name: String,
+    /// Id of the source this mount uses.
     pub source: String,
     pub mountpoint: PathBuf,
     pub options: MountOptions,

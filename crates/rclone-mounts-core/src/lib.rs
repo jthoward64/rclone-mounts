@@ -5,6 +5,7 @@ pub mod control;
 pub mod credentials;
 pub mod error;
 pub mod mount;
+pub mod naming;
 pub mod rclone_cli;
 pub mod rclone_config;
 pub mod source;

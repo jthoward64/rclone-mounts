@@ -62,7 +62,10 @@ pub struct State {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceMetadata {
+    /// Internal id: rclone remote / file key. Slug, validated, immutable.
     pub name: String,
+    /// Freeform name shown in the UI.
+    pub display_name: String,
     pub kind: String,
     pub options: BTreeMap<String, String>,
     pub has_secret: bool,
@@ -149,6 +152,12 @@ impl Backend for LocalBackend {
             .iter()
             .map(|name| SourceMetadata {
                 name: name.to_string(),
+                // Old data (pre display names) has no display_name key; fall
+                // back to the id so it still shows something sensible.
+                display_name: doc
+                    .get(name, "display_name")
+                    .unwrap_or(name)
+                    .to_string(),
                 kind: doc.get(name, "type").unwrap_or("").to_string(),
                 options: collect_section_options(&doc, name),
                 has_secret: false, // probe pending; see [[probe-credential]]
@@ -156,13 +165,19 @@ impl Backend for LocalBackend {
             .collect();
 
         let mounts_text = self.store.read_mounts_state()?;
-        let mounts = if mounts_text.is_empty() {
+        let mut mounts = if mounts_text.is_empty() {
             Vec::new()
         } else {
             toml::from_str::<MountsFile>(&mounts_text)
                 .map_err(|e| Error::ConfigParse(format!("mounts.toml: {e}")))?
                 .mount
         };
+        // Old data (pre display names) deserializes display_name as empty.
+        for m in &mut mounts {
+            if m.display_name.is_empty() {
+                m.display_name = m.name.clone();
+            }
+        }
 
         Ok(State { sources, mounts })
     }
@@ -201,6 +216,10 @@ impl Backend for LocalBackend {
             // type change. Comments elsewhere are preserved.
             doc.remove_section(&src.name);
             doc.set(&src.name, "type", source_kind_str(src.kind));
+            // Our own metadata, not an rclone option; rclone never reads this
+            // file (it reads the credential blob), so it's harmless here and is
+            // filtered back out on load.
+            doc.set(&src.name, "display_name", &src.display_name);
             for (k, v) in &src.options {
                 doc.set(&src.name, k, v);
             }
@@ -312,15 +331,16 @@ impl HelperBackend {
 impl Backend for HelperBackend {
     async fn load(&self) -> Result<State> {
         let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
-        let sources: Vec<(String, String, BTreeMap<String, String>)> =
+        let sources: Vec<(String, String, String, BTreeMap<String, String>)> =
             proxy.call("ListSources", &()).await?;
-        let mounts: Vec<(String, String, String, bool)> =
+        let mounts: Vec<(String, String, String, String, bool)> =
             proxy.call("ListMounts", &()).await?;
         Ok(State {
             sources: sources
                 .into_iter()
-                .map(|(name, kind, options)| SourceMetadata {
+                .map(|(name, display_name, kind, options)| SourceMetadata {
                     name,
+                    display_name,
                     kind,
                     options,
                     has_secret: false,
@@ -328,8 +348,9 @@ impl Backend for HelperBackend {
                 .collect(),
             mounts: mounts
                 .into_iter()
-                .map(|(name, source, mountpoint, enabled)| Mount {
+                .map(|(name, display_name, source, mountpoint, enabled)| Mount {
                     name,
+                    display_name,
                     source,
                     mountpoint: mountpoint.into(),
                     options: Default::default(),
@@ -382,6 +403,7 @@ fn fold(mut state: State, cs: &Changeset) -> State {
         let kind = source_kind_str(src.kind).to_string();
         let entry = SourceMetadata {
             name: src.name.clone(),
+            display_name: src.display_name.clone(),
             kind,
             options: src.options.clone(),
             has_secret: src.new_secret.is_some(),
@@ -585,6 +607,7 @@ mod tests {
         options.insert("user".into(), "alice".into());
         SourceDef {
             name: name.into(),
+            display_name: name.into(),
             kind: SourceKind::Smb,
             options,
             new_secret: if with_secret { Some("hunter2".into()) } else { None },
@@ -594,6 +617,7 @@ mod tests {
     fn sample_mount(name: &str, source: &str) -> Mount {
         Mount {
             name: name.into(),
+            display_name: name.into(),
             source: source.into(),
             mountpoint: PathBuf::from(format!("/tmp/mnt/{name}")),
             options: Default::default(),
@@ -625,6 +649,25 @@ mod tests {
         assert_eq!(src.kind, "smb");
         assert_eq!(src.options.get("host").map(String::as_str), Some("files.example.com"));
         assert_eq!(src.options.get("user").map(String::as_str), Some("alice"));
+    }
+
+    #[test]
+    fn display_name_round_trips_and_stays_out_of_options() {
+        let (_d, b) = fixture();
+        let mut src = smb_source("work", true);
+        src.display_name = "😀 Work Share".into();
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![src],
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let state = async_io::block_on(b.load()).unwrap();
+        let s = &state.sources[0];
+        assert_eq!(s.name, "work");
+        assert_eq!(s.display_name, "😀 Work Share");
+        // The display name is our metadata, not an rclone connection option.
+        assert!(!s.options.contains_key("display_name"), "leaked: {:?}", s.options);
     }
 
     #[test]

@@ -41,10 +41,10 @@ impl Helper {
 #[interface(name = "dev.jthoward.RcloneMounts.Helper1")]
 impl Helper {
     /// Lists system-scope sources. Authorized by `read-system`.
-    /// Returns (name, kind, options-without-secrets) tuples.
+    /// Returns (name, display_name, kind, options-without-secrets) tuples.
     async fn list_sources(
         &self,
-    ) -> zbus::fdo::Result<Vec<(String, String, HashMap<String, String>)>> {
+    ) -> zbus::fdo::Result<Vec<(String, String, String, HashMap<String, String>)>> {
         let backend = Self::make_backend().await?;
         let state = backend
             .load()
@@ -53,13 +53,15 @@ impl Helper {
         Ok(state
             .sources
             .into_iter()
-            .map(|s: SourceMetadata| (s.name, s.kind, s.options.into_iter().collect()))
+            .map(|s: SourceMetadata| {
+                (s.name, s.display_name, s.kind, s.options.into_iter().collect())
+            })
             .collect())
     }
 
     /// Lists system-scope mounts. Authorized by `read-system`.
-    /// Returns (name, source, mountpoint, enabled).
-    async fn list_mounts(&self) -> zbus::fdo::Result<Vec<(String, String, String, bool)>> {
+    /// Returns (name, display_name, source, mountpoint, enabled).
+    async fn list_mounts(&self) -> zbus::fdo::Result<Vec<(String, String, String, String, bool)>> {
         let backend = Self::make_backend().await?;
         let state = backend
             .load()
@@ -70,7 +72,7 @@ impl Helper {
             .into_iter()
             .map(|m| {
                 let mp = m.mountpoint.to_string_lossy().into_owned();
-                (m.name, m.source, mp, m.enabled)
+                (m.name, m.display_name, m.source, mp, m.enabled)
             })
             .collect())
     }

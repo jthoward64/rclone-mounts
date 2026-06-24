@@ -57,11 +57,14 @@ mod ffi {
         #[qinvokable]
         fn reset(self: Pin<&mut BackendController>);
 
-        /// Create or replace a mount in the pending changeset.
+        /// Create or replace a mount in the pending changeset. `id` is empty when
+        /// creating (the controller derives a stable id from `display_name`) and
+        /// set when editing an existing mount. `source` is a source id.
         #[qinvokable]
         fn upsert_mount(
             self: Pin<&mut BackendController>,
-            name: &QString,
+            id: &QString,
+            display_name: &QString,
             source: &QString,
             mountpoint: &QString,
             enabled: bool,
@@ -71,15 +74,17 @@ mod ffi {
         #[qinvokable]
         fn remove_mount(self: Pin<&mut BackendController>, name: &QString);
 
-        /// Create or replace a source in the pending changeset. `kind` is the
-        /// rclone type tag (smb/drive/webdav). `options_json` is a JSON object
-        /// of string→string connection params. `secret` sets/rotates the stored
-        /// password when non-empty; an empty string leaves the existing
-        /// credential untouched (write-only secret model).
+        /// Create or replace a source in the pending changeset. `id` is empty
+        /// when creating (the controller derives a stable id from `display_name`)
+        /// and set when editing. `kind` is the rclone type tag (smb/drive/webdav).
+        /// `options_json` is a JSON object of string→string connection params.
+        /// `secret` sets/rotates the stored password when non-empty; an empty
+        /// string leaves the existing credential untouched (write-only secret).
         #[qinvokable]
         fn upsert_source(
             self: Pin<&mut BackendController>,
-            name: &QString,
+            id: &QString,
+            display_name: &QString,
             kind: &QString,
             options_json: &QString,
             secret: &QString,
@@ -139,7 +144,10 @@ pub struct BackendControllerRust {
 /// mount with no unit yet); `applied` gates the Start/Stop controls.
 #[derive(Serialize)]
 struct MountView {
+    /// Internal id; QML passes it back for start/stop/edit/remove.
     name: String,
+    /// Freeform name shown to the user.
+    display_name: String,
     source: String,
     mountpoint: String,
     enabled: bool,
@@ -152,7 +160,10 @@ struct MountView {
 /// write-only password affordance (the secret itself is never read back).
 #[derive(Serialize)]
 struct SourceView {
+    /// Internal id; QML passes it back for edit/remove and as a mount's source.
     name: String,
+    /// Freeform name shown to the user.
+    display_name: String,
     kind: String,
     options: BTreeMap<String, String>,
     has_secret: bool,
@@ -162,6 +173,7 @@ impl From<&SourceMetadata> for SourceView {
     fn from(s: &SourceMetadata) -> Self {
         Self {
             name: s.name.clone(),
+            display_name: s.display_name.clone(),
             kind: s.kind.clone(),
             options: s.options.clone(),
             has_secret: s.has_secret,
@@ -280,13 +292,17 @@ impl ffi::BackendController {
 
     fn upsert_mount(
         mut self: Pin<&mut Self>,
-        name: &QString,
+        id: &QString,
+        display_name: &QString,
         source: &QString,
         mountpoint: &QString,
         enabled: bool,
     ) {
+        let display = display_name.to_string();
+        let id = self.as_ref().resolve_id(&id.to_string(), &display, false);
         let mount = Mount {
-            name: name.to_string(),
+            name: id,
+            display_name: display,
             source: source.to_string(),
             mountpoint: PathBuf::from(mountpoint.to_string()),
             options: Default::default(),
@@ -320,7 +336,8 @@ impl ffi::BackendController {
 
     fn upsert_source(
         mut self: Pin<&mut Self>,
-        name: &QString,
+        id: &QString,
+        display_name: &QString,
         kind: &QString,
         options_json: &QString,
         secret: &QString,
@@ -340,8 +357,11 @@ impl ffi::BackendController {
             }
         };
         let secret = secret.to_string();
+        let display = display_name.to_string();
+        let id = self.as_ref().resolve_id(&id.to_string(), &display, true);
         let def = SourceDef {
-            name: name.to_string(),
+            name: id,
+            display_name: display,
             kind,
             options,
             new_secret: if secret.is_empty() { None } else { Some(secret) },
@@ -415,6 +435,24 @@ impl ffi::BackendController {
         self.as_mut().refresh();
     }
 
+    /// Resolve the id for an upsert: keep an explicit id (editing an existing
+    /// row), or derive a fresh stable id from the display name, unique against
+    /// the currently displayed sources/mounts.
+    fn resolve_id(self: Pin<&Self>, id: &str, display: &str, is_source: bool) -> String {
+        if !id.is_empty() {
+            return id.to_string();
+        }
+        let rust = self.rust();
+        let displayed = rust.applied.preview(&rust.pending);
+        let existing: std::collections::HashSet<String> = if is_source {
+            displayed.sources.iter().map(|s| s.name.clone()).collect()
+        } else {
+            displayed.mounts.iter().map(|m| m.name.clone()).collect()
+        };
+        let fallback = if is_source { "source" } else { "mount" };
+        rclone_mounts_core::naming::derive_id(display, fallback, |c| existing.contains(c))
+    }
+
     /// Re-query systemd ActiveState for every applied mount. Plain helper (not a
     /// QML invokable); callers refresh the model afterwards.
     fn fetch_statuses(mut self: Pin<&mut Self>) {
@@ -462,6 +500,7 @@ impl ffi::BackendController {
                     };
                     MountView {
                         name: m.name.clone(),
+                        display_name: m.display_name.clone(),
                         source: m.source.clone(),
                         mountpoint: m.mountpoint.display().to_string(),
                         enabled: m.enabled,

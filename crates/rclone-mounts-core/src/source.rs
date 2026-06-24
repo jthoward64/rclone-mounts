@@ -49,7 +49,10 @@ pub struct Source {
 /// stored credential untouched.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceDef {
+    /// Internal id: rclone remote / file key. Slug, validated, immutable.
     pub name: String,
+    /// Freeform name shown in the UI.
+    pub display_name: String,
     pub kind: SourceKind,
     pub options: BTreeMap<String, String>,
     pub new_secret: Option<String>,
