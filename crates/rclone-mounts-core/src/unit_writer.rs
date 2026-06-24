@@ -105,7 +105,9 @@ fn build_exec_start(mount: &Mount, ctx: &Context, mountpoint: &str) -> String {
         format!("{}:", mount.source),
         mountpoint.into(),
         format!("--vfs-cache-mode={}", cache_mode_str(mount.options.cache_mode)),
-        "--systemd-log".into(),
+        // rclone's global flag is --log-systemd (routes logs to the journal and
+        // suppresses its own timestamps). NB: not --systemd-log.
+        "--log-systemd".into(),
     ];
 
     if let Some(mb) = mount.options.cache_max_size_mb {
@@ -178,6 +180,14 @@ mod tests {
         let unit = render(&sample_mount(), &user_ctx()).unwrap();
         assert!(unit.contains("ExecStartPre=/usr/bin/mkdir -p /home/alice/Mounts/work\n"));
         assert!(unit.contains("ExecStop=/usr/bin/fusermount3 -u /home/alice/Mounts/work\n"));
+    }
+
+    #[test]
+    fn exec_start_uses_correct_systemd_log_flag() {
+        let unit = render(&sample_mount(), &user_ctx()).unwrap();
+        // Must be rclone's real flag; --systemd-log is rejected as unknown.
+        assert!(unit.contains("--log-systemd"));
+        assert!(!unit.contains("--systemd-log"));
     }
 
     #[test]
