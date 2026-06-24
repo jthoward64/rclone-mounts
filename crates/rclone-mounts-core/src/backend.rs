@@ -22,10 +22,11 @@ use crate::rclone_config::Document;
 use crate::source::SourceDef;
 use crate::store::UnitStore;
 use crate::unit_writer;
-use crate::{credentials, Error, Result};
+use crate::{credentials, rclone_cli, Error, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 /// Operations the KCM (and any other frontend) performs against a mount backend.
 /// Impls choose whether to run locally or proxy via D-Bus.
@@ -92,6 +93,21 @@ impl LocalBackend {
             scope: Scope::User,
             credential_dir_spec: "%h/.config/rclone-mounts/credentials".into(),
         })
+    }
+}
+
+impl LocalBackend {
+    /// Decrypt the existing credential for `name` (if any) and pull the stored
+    /// obscured password out of it, so a params-only source edit keeps the
+    /// password the user already set. Returns `None` when there's no credential
+    /// or it carries no password (a password-less source).
+    fn existing_obscured_pass(&self, name: &str) -> Result<Option<String>> {
+        let Some(encrypted) = self.store.read_credential(name)? else {
+            return Ok(None);
+        };
+        let plain = credentials::decrypt(self.scope, &cred_id(), &encrypted)?;
+        let text = String::from_utf8_lossy(&plain);
+        Ok(extract_pass(&text))
     }
 }
 
@@ -174,15 +190,21 @@ impl Backend for LocalBackend {
         }
         self.store.write_sources_conf(&doc.render())?;
 
-        // 4. Credentials. new_secret == Some means rotate; None leaves any
-        //    existing blob alone (write-only secret model).
+        // 4. Credentials. The encrypted blob is the *complete* rclone remote
+        //    section (type + options + obscured pass), so it must be rebuilt on
+        //    every source upsert — even a params-only edit, since the params
+        //    live inside the blob. When no new secret is supplied we decrypt the
+        //    existing blob to carry the stored password forward. This is the one
+        //    place a stored password is read back, and only by the process that
+        //    owns the store (the helper for system scope; the KCM for user scope).
         for src in &changeset.upsert_sources {
-            if let Some(secret) = &src.new_secret {
-                let blob = encode_credential_blob(&src.name, secret);
-                let encrypted =
-                    credentials::encrypt(self.scope, &cred_id(), blob.as_bytes())?;
-                self.store.write_credential(&src.name, &encrypted)?;
-            }
+            let obscured_pass = match &src.new_secret {
+                Some(secret) => Some(rclone_cli::obscure(secret)?),
+                None => self.existing_obscured_pass(&src.name)?,
+            };
+            let blob = encode_credential_blob(src, obscured_pass.as_deref());
+            let encrypted = credentials::encrypt(self.scope, &cred_id(), blob.as_bytes())?;
+            self.store.write_credential(&src.name, &encrypted)?;
         }
         for name in &changeset.delete_sources {
             self.store.delete_credential(name)?;
@@ -356,13 +378,31 @@ fn source_kind_str(kind: crate::source::SourceKind) -> &'static str {
     kind.as_tag()
 }
 
-/// rclone.conf fragment that becomes the credential payload. systemd decrypts
-/// this into `%d/rclone-conf` at unit start; rclone reads it via `--config=%d/rclone-conf`.
-fn encode_credential_blob(source_name: &str, secret: &str) -> String {
-    // v0 encodes just the password. A future iteration will fold non-secret
-    // connection params in here too so the unit is fully self-contained and
-    // doesn't depend on the world-readable sources.conf.
-    format!("[{source_name}]\npass = {secret}\n")
+/// The complete rclone remote section that becomes the credential payload:
+/// `type`, every connection option, and the obscured password. systemd decrypts
+/// this into `%d/rclone-conf` at unit start; rclone reads it via
+/// `--config=%d/rclone-conf`, so the mount is fully self-contained and never
+/// touches `sources.conf` (which exists only as the KCM's editable record).
+fn encode_credential_blob(src: &SourceDef, obscured_pass: Option<&str>) -> String {
+    let mut out = format!("[{}]\ntype = {}\n", src.name, source_kind_str(src.kind));
+    for (k, v) in &src.options {
+        let _ = writeln!(out, "{k} = {v}");
+    }
+    if let Some(pass) = obscured_pass {
+        let _ = writeln!(out, "pass = {pass}");
+    }
+    out
+}
+
+/// Pull the `pass = …` value out of a decrypted rclone-conf blob. Matches the
+/// `pass` key exactly (not `password`/other keys), tolerating optional spaces
+/// around `=`.
+fn extract_pass(blob: &str) -> Option<String> {
+    blob.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("pass")?.trim_start();
+        let value = rest.strip_prefix('=')?.trim();
+        Some(value.to_string())
+    })
 }
 
 fn cred_id() -> String {
@@ -493,6 +533,54 @@ mod tests {
         assert!(!unit_path.exists());
         let state = async_io::block_on(b.load()).unwrap();
         assert_eq!(state.sources.len(), 1);
+    }
+
+    #[test]
+    fn extract_pass_matches_only_the_pass_key() {
+        assert_eq!(
+            extract_pass("[w]\ntype = smb\npass = ABC123\n").as_deref(),
+            Some("ABC123")
+        );
+        assert_eq!(extract_pass("pass=XYZ").as_deref(), Some("XYZ"));
+        assert_eq!(extract_pass("password = nope\n"), None);
+        assert_eq!(extract_pass("type = smb\nhost = h\n"), None);
+    }
+
+    fn decrypt_blob(b: &LocalBackend, name: &str) -> String {
+        let enc = b
+            .store
+            .read_credential(name)
+            .unwrap()
+            .expect("credential should exist");
+        let plain = crate::credentials::decrypt(b.scope, &cred_id(), &enc).unwrap();
+        String::from_utf8(plain).unwrap()
+    }
+
+    #[test]
+    fn editing_params_without_secret_preserves_password() {
+        let (_d, b) = fixture();
+        // Create a source with a password.
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![smb_source("work", true)],
+            ..Default::default()
+        }))
+        .unwrap();
+        let original_pass = extract_pass(&decrypt_blob(&b, "work"));
+        assert!(original_pass.is_some(), "password should be stored on create");
+
+        // Edit only the host; supply no new secret.
+        let mut edited = smb_source("work", false);
+        edited.options.insert("host".into(), "newhost.example.com".into());
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![edited],
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let blob = decrypt_blob(&b, "work");
+        assert!(blob.contains("host = newhost.example.com"), "new host: {blob}");
+        assert!(blob.contains("type = smb"), "type present: {blob}");
+        assert_eq!(extract_pass(&blob), original_pass, "password carried forward");
     }
 
     #[test]

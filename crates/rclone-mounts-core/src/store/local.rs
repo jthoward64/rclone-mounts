@@ -154,6 +154,15 @@ impl UnitStore for LocalUnitStore {
         }
     }
 
+    fn read_credential(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        let path = self.credential_path(name)?;
+        match fs::read(&path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn read_sources_conf(&self) -> Result<String> {
         match fs::read_to_string(self.sources_path()) {
             Ok(s) => Ok(s),

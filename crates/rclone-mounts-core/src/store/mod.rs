@@ -15,6 +15,10 @@ pub trait UnitStore: Send + Sync {
 
     fn write_credential(&self, name: &str, blob: &[u8]) -> Result<()>;
     fn delete_credential(&self, name: &str) -> Result<()>;
+    /// Read the encrypted credential blob for `name`, or `None` if there isn't
+    /// one. Used to reuse a stored password when editing a source's other
+    /// fields, and to answer "does this source have a secret?".
+    fn read_credential(&self, name: &str) -> Result<Option<Vec<u8>>>;
 
     fn read_sources_conf(&self) -> Result<String>;
     fn write_sources_conf(&self, contents: &str) -> Result<()>;
