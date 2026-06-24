@@ -2,33 +2,38 @@
 
 use thiserror::Error;
 
+/// Error messages are written to be shown directly to the user (the KCM
+/// surfaces `Display` in an inline banner), so they avoid jargon and internal
+/// detail. The trailing `{0}` carries the underlying cause for the cases where
+/// it's a readable system message; purely internal failures keep their detail
+/// in logs via `Debug`.
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("io: {0}")]
+    #[error("{0}")]
     Io(#[from] std::io::Error),
 
-    #[error("dbus: {0}")]
+    #[error("Couldn't reach the systemd service. {0}")]
     DBus(#[from] zbus::Error),
 
-    #[error("rclone.conf parse: {0}")]
+    #[error("The rclone configuration couldn't be read. {0}")]
     ConfigParse(String),
 
-    #[error("invalid name {0:?}: must match ^[a-z0-9][a-z0-9-]{{0,62}}$")]
+    #[error("\"{0}\" can't be used as a name here. Use lowercase letters, numbers, and dashes — for example \"work-share\".")]
     InvalidName(String),
 
-    #[error("not found: {0}")]
+    #[error("{0}")]
     NotFound(String),
 
-    #[error("already exists: {0}")]
+    #[error("{0} already exists.")]
     AlreadyExists(String),
 
-    #[error("permission denied: {0}")]
+    #[error("You don't have permission to do that. {0}")]
     PermissionDenied(String),
 
-    #[error("credentials: {0}")]
+    #[error("Couldn't store the password securely. {0}")]
     Credentials(String),
 
-    #[error("systemd: {0}")]
+    #[error("{0}")]
     Systemd(String),
 }
 

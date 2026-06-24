@@ -510,7 +510,8 @@ KCM.SimpleKCM {
                 }
                 QQC2.CheckBox {
                     id: enabledBox
-                    Kirigami.FormData.label: i18n("Start at login:")
+                    Kirigami.FormData.label: i18n("Mount automatically:")
+                    text: i18n("Mount when you log in")
                 }
             }
         }

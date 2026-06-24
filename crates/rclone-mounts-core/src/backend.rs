@@ -235,6 +235,9 @@ impl Backend for LocalBackend {
 
         // 6. Render and write .service units for upserts; delete units for removals.
         for name in &changeset.delete_mounts {
+            // Drop any autostart symlink before removing the file (best effort;
+            // a not-enabled unit just no-ops).
+            let _ = self.control.disable(&mount_unit_name(name)).await;
             self.store.delete_unit(name)?;
         }
         // Re-render every mount, not just upserts: if a source it references
@@ -251,6 +254,19 @@ impl Backend for LocalBackend {
 
         // 7. daemon-reload so systemd picks up the new/changed unit files.
         self.control.reload().await?;
+
+        // 8. Reconcile "mount automatically": enable units the user wants up at
+        //    login, disable the rest. Enabling installs the WantedBy symlink so
+        //    the mount comes up on next login; it does not start the mount now
+        //    (that's the explicit Start action).
+        for mount in &target.mounts {
+            let unit = mount_unit_name(&mount.name);
+            if mount.enabled {
+                self.control.enable(&unit).await?;
+            } else {
+                self.control.disable(&unit).await?;
+            }
+        }
         Ok(())
     }
 
@@ -403,7 +419,8 @@ fn validate_references(state: &State) -> Result<()> {
     for m in &state.mounts {
         if !source_names.contains(m.source.as_str()) {
             return Err(Error::NotFound(format!(
-                "mount {:?} references unknown source {:?}",
+                "The mount “{}” uses the source “{}”, which no longer exists. \
+                 Pick a different source or remove the mount.",
                 m.name, m.source
             )));
         }
@@ -467,13 +484,85 @@ fn cred_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::session::SessionSystemd;
+    use crate::control::SystemdControl;
     use crate::source::SourceKind;
     use crate::store::local::LocalUnitStore;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    /// No-op systemd control for the apply tests. The real `SessionSystemd`
+    /// can't enable/disable units living in a tempdir (they aren't on systemd's
+    /// search path), and these tests are about the store/credential side, not
+    /// live unit management — that's covered by the control module's own smoke
+    /// test. Returns success for every action and a fixed state.
+    struct NoopControl;
+
+    #[async_trait]
+    impl SystemdControl for NoopControl {
+        async fn reload(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn start(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn stop(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn restart(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn enable(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn disable(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn active_state(&self, _: &str) -> Result<String> {
+            Ok("inactive".into())
+        }
+    }
+
+    /// Like [`NoopControl`] but records which units were enabled/disabled, so a
+    /// test can assert the "mount automatically" reconciliation. Cloneable and
+    /// shares its log, so the test keeps a handle after the backend takes one.
+    #[derive(Clone, Default)]
+    struct RecordingControl {
+        enabled: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        disabled: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl SystemdControl for RecordingControl {
+        async fn reload(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn start(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn stop(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn restart(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn enable(&self, unit: &str) -> Result<()> {
+            self.enabled.lock().unwrap().push(unit.to_string());
+            Ok(())
+        }
+        async fn disable(&self, unit: &str) -> Result<()> {
+            self.disabled.lock().unwrap().push(unit.to_string());
+            Ok(())
+        }
+        async fn active_state(&self, _: &str) -> Result<String> {
+            Ok("inactive".into())
+        }
+    }
+
     fn fixture() -> (TempDir, LocalBackend) {
+        fixture_with(Box::new(NoopControl))
+    }
+
+    fn fixture_with(control: Box<dyn SystemdControl>) -> (TempDir, LocalBackend) {
         let dir = TempDir::new().unwrap();
         let store = Box::new(LocalUnitStore {
             config_dir: dir.path().join("config"),
@@ -481,10 +570,9 @@ mod tests {
             unit_dir: dir.path().join("units"),
             file_mode: 0o600,
         });
-        let control = async_io::block_on(async { SessionSystemd::new().await.unwrap() });
         let backend = LocalBackend {
             store,
-            control: Box::new(control),
+            control,
             scope: Scope::User,
             credential_dir_spec: "%h/.config/rclone-mounts/credentials".into(),
         };
@@ -633,6 +721,34 @@ mod tests {
         assert!(blob.contains("host = newhost.example.com"), "new host: {blob}");
         assert!(blob.contains("type = smb"), "type present: {blob}");
         assert_eq!(extract_pass(&blob), original_pass, "password carried forward");
+    }
+
+    #[test]
+    fn apply_enables_automatic_mounts_and_disables_others() {
+        let control = RecordingControl::default();
+        let (_d, b) = fixture_with(Box::new(control.clone()));
+
+        let mut auto = sample_mount("auto", "work");
+        auto.enabled = true;
+        let manual = sample_mount("manual", "work"); // enabled: false
+
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![smb_source("work", true)],
+            upsert_mounts: vec![auto, manual],
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let enabled = control.enabled.lock().unwrap();
+        let disabled = control.disabled.lock().unwrap();
+        assert!(
+            enabled.contains(&"rclone-mount-auto.service".to_string()),
+            "auto mount should be enabled: {enabled:?}"
+        );
+        assert!(
+            disabled.contains(&"rclone-mount-manual.service".to_string()),
+            "manual mount should be disabled: {disabled:?}"
+        );
     }
 
     #[test]

@@ -224,7 +224,7 @@ impl ffi::BackendController {
             Err(e) => {
                 tracing::error!(error = %e, "load failed");
                 self.as_mut()
-                    .set_error_string(QString::from(format!("Failed to load mounts: {e}").as_str()));
+                    .set_error_string(QString::from(format!("Couldn’t load your mounts. {e}").as_str()));
             }
         }
         self.as_mut().set_busy(false);
@@ -236,7 +236,7 @@ impl ffi::BackendController {
         }
         if self.as_ref().rust().backend.is_none() {
             self.as_mut()
-                .set_error_string(QString::from("Backend not initialised; reload first."));
+                .set_error_string(QString::from("The rclone settings module isn’t ready yet. Try closing and reopening it."));
             return;
         }
 
@@ -266,7 +266,7 @@ impl ffi::BackendController {
             Err(e) => {
                 tracing::error!(error = %e, "commit failed");
                 self.as_mut()
-                    .set_error_string(QString::from(format!("Failed to apply changes: {e}").as_str()));
+                    .set_error_string(QString::from(format!("Couldn’t save your changes. {e}").as_str()));
             }
         }
         self.as_mut().set_busy(false);
@@ -328,14 +328,14 @@ impl ffi::BackendController {
         let kind_tag = kind.to_string();
         let Some(kind) = SourceKind::from_tag(&kind_tag) else {
             self.as_mut()
-                .set_error_string(QString::from(format!("Unknown source type: {kind_tag}").as_str()));
+                .set_error_string(QString::from(format!("“{kind_tag}” isn’t a source type this version supports.").as_str()));
             return;
         };
         let options: BTreeMap<String, String> = match serde_json::from_str(&options_json.to_string()) {
             Ok(o) => o,
             Err(e) => {
                 self.as_mut()
-                    .set_error_string(QString::from(format!("Invalid source options: {e}").as_str()));
+                    .set_error_string(QString::from(format!("Those source settings couldn’t be read. {e}").as_str()));
                 return;
             }
         };
@@ -391,7 +391,7 @@ impl ffi::BackendController {
         self.as_mut().set_error_string(QString::default());
         if self.as_ref().rust().backend.is_none() {
             self.as_mut()
-                .set_error_string(QString::from("Backend not initialised; reload first."));
+                .set_error_string(QString::from("The rclone settings module isn’t ready yet. Try closing and reopening it."));
             return;
         }
         let result = {
@@ -409,7 +409,7 @@ impl ffi::BackendController {
             let verb = if start { "start" } else { "stop" };
             tracing::error!(error = %e, mount = %name, "{verb} failed");
             self.as_mut()
-                .set_error_string(QString::from(format!("Failed to {verb} {name}: {e}").as_str()));
+                .set_error_string(QString::from(format!("Couldn’t {verb} “{name}”. {e}").as_str()));
         }
         self.as_mut().fetch_statuses();
         self.as_mut().refresh();
