@@ -288,18 +288,25 @@ KCM.SimpleKCM {
                                     text: item.modelData.name
                                     elide: Text.ElideRight
                                 }
-                                QQC2.Label {
+                                // Status word (colored) + connection, on the
+                                // left so it never collides with the swipe
+                                // action icons on the right.
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: i18n("%1 → %2", item.modelData.source, item.modelData.mountpoint)
-                                    elide: Text.ElideMiddle
-                                    opacity: 0.7
-                                    font: Kirigami.Theme.smallFont
+                                    spacing: Kirigami.Units.smallSpacing
+                                    QQC2.Label {
+                                        text: root.statusText(item.modelData.active)
+                                        color: root.statusColor(item.modelData.active)
+                                        font: Kirigami.Theme.smallFont
+                                    }
+                                    QQC2.Label {
+                                        Layout.fillWidth: true
+                                        text: i18n("· %1 → %2", item.modelData.source, item.modelData.mountpoint)
+                                        elide: Text.ElideMiddle
+                                        opacity: 0.7
+                                        font: Kirigami.Theme.smallFont
+                                    }
                                 }
-                            }
-                            QQC2.Label {
-                                text: root.statusText(item.modelData.active)
-                                color: root.statusColor(item.modelData.active)
-                                font: Kirigami.Theme.smallFont
                             }
                         }
 
