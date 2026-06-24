@@ -19,6 +19,40 @@ KCM.SimpleKCM {
     readonly property var mounts: JSON.parse(backend.mountsJson || "[]")
     readonly property var sources: JSON.parse(backend.sourcesJson || "[]")
 
+    // Source kinds we offer, and the per-kind connection fields the editor
+    // renders. Keeping this declarative means a new rclone backend is just a
+    // new entry — the editor and the options payload follow automatically.
+    readonly property var sourceKinds: [
+        { tag: "smb", label: i18n("SMB / Windows share"), icon: "folder-network-symbolic" },
+        { tag: "webdav", label: i18n("WebDAV"), icon: "folder-cloud-symbolic" },
+        { tag: "drive", label: i18n("Google Drive"), icon: "folder-google-drive" }
+    ]
+    readonly property var sourceSchemas: ({
+        "smb": [
+            { key: "host", label: i18n("Host:"), placeholder: "files.example.com" },
+            { key: "user", label: i18n("User:"), placeholder: "alice" },
+            { key: "domain", label: i18n("Domain:"), placeholder: i18n("optional") },
+            { key: "port", label: i18n("Port:"), placeholder: "445" }
+        ],
+        "webdav": [
+            { key: "url", label: i18n("URL:"), placeholder: "https://dav.example.com/remote.php/dav/files/alice" },
+            { key: "vendor", label: i18n("Vendor:"), placeholder: "nextcloud / owncloud / other" },
+            { key: "user", label: i18n("User:"), placeholder: "alice" }
+        ],
+        "drive": []
+    })
+
+    function kindLabel(tag) {
+        for (let i = 0; i < sourceKinds.length; i++)
+            if (sourceKinds[i].tag === tag) return sourceKinds[i].label;
+        return tag;
+    }
+    function kindIcon(tag) {
+        for (let i = 0; i < sourceKinds.length; i++)
+            if (sourceKinds[i].tag === tag) return sourceKinds[i].icon;
+        return "folder-cloud-symbolic";
+    }
+
     // The C++ shim emits these in response to the KCM's Apply/Reset/load.
     Connections {
         target: kcm
@@ -64,12 +98,105 @@ KCM.SimpleKCM {
             ColumnLayout {
                 spacing: Kirigami.Units.smallSpacing
 
+                // Sources section.
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.margins: Kirigami.Units.smallSpacing
+                    Kirigami.Heading {
+                        Layout.fillWidth: true
+                        level: 3
+                        text: i18n("Sources")
+                    }
+                    QQC2.Button {
+                        icon.name: "list-add-symbolic"
+                        text: i18n("Add source…")
+                        onClicked: sourceEditor.openFor(null)
+                    }
+                }
 
-                    Item { Layout.fillWidth: true }
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    visible: root.sources.length === 0
+                    text: i18n("No sources yet. A source is an rclone remote (an SMB share, WebDAV server, …) that mounts point at.")
+                    wrapMode: Text.WordWrap
+                    opacity: 0.7
+                }
 
+                ListView {
+                    id: sourcesView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.sources.length > 0
+                    clip: true
+                    model: root.sources
+
+                    delegate: Kirigami.SwipeListItem {
+                        id: srcItem
+                        required property var modelData
+
+                        contentItem: RowLayout {
+                            Kirigami.Icon {
+                                implicitWidth: Kirigami.Units.iconSizes.small
+                                implicitHeight: Kirigami.Units.iconSizes.small
+                                source: root.kindIcon(srcItem.modelData.kind)
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                QQC2.Label {
+                                    Layout.fillWidth: true
+                                    text: srcItem.modelData.name
+                                    elide: Text.ElideRight
+                                }
+                                QQC2.Label {
+                                    Layout.fillWidth: true
+                                    text: {
+                                        let o = srcItem.modelData.options || {};
+                                        let target = o.host || o.url || "";
+                                        return target.length > 0
+                                            ? i18n("%1 — %2", root.kindLabel(srcItem.modelData.kind), target)
+                                            : root.kindLabel(srcItem.modelData.kind);
+                                    }
+                                    elide: Text.ElideMiddle
+                                    opacity: 0.7
+                                    font: Kirigami.Theme.smallFont
+                                }
+                            }
+                            Kirigami.Icon {
+                                visible: srcItem.modelData.has_secret
+                                implicitWidth: Kirigami.Units.iconSizes.small
+                                implicitHeight: Kirigami.Units.iconSizes.small
+                                source: "lock-symbolic"
+                                opacity: 0.6
+                                QQC2.ToolTip.text: i18n("A password is stored for this source")
+                                QQC2.ToolTip.visible: hovered ?? false
+                            }
+                        }
+
+                        actions: [
+                            Kirigami.Action {
+                                icon.name: "document-edit-symbolic"
+                                text: i18n("Edit")
+                                onTriggered: sourceEditor.openFor(srcItem.modelData)
+                            },
+                            Kirigami.Action {
+                                icon.name: "edit-delete-symbolic"
+                                text: i18n("Remove")
+                                onTriggered: backend.removeSource(srcItem.modelData.name)
+                            }
+                        ]
+                    }
+                }
+
+                Kirigami.Separator { Layout.fillWidth: true }
+
+                // Mounts section.
+                RowLayout {
+                    Layout.fillWidth: true
+                    Kirigami.Heading {
+                        Layout.fillWidth: true
+                        level: 3
+                        text: i18n("Mounts")
+                    }
                     QQC2.Button {
                         icon.name: "list-add-symbolic"
                         text: i18n("Add mount…")
@@ -81,15 +208,14 @@ KCM.SimpleKCM {
                     }
                 }
 
-                Kirigami.PlaceholderMessage {
-                    Layout.alignment: Qt.AlignCenter
+                QQC2.Label {
                     Layout.fillWidth: true
                     visible: root.mounts.length === 0
-                    icon.name: "folder-cloud-symbolic"
-                    text: i18n("No mounts yet")
-                    explanation: root.sources.length > 0
-                        ? i18n("Add a mount that uses one of your sources.")
-                        : i18n("Create an rclone source, then a mount that uses it.")
+                    text: root.sources.length > 0
+                        ? i18n("No mounts yet. Add a mount that uses one of your sources.")
+                        : i18n("No mounts yet. Create a source first, then a mount that uses it.")
+                    wrapMode: Text.WordWrap
+                    opacity: 0.7
                 }
 
                 ListView {
@@ -157,6 +283,111 @@ KCM.SimpleKCM {
         }
     }
 
+    // --- Source editor ----------------------------------------------------
+    Kirigami.OverlaySheet {
+        id: sourceEditor
+
+        // null → create; otherwise editing an existing source (name is the key).
+        property var editing: null
+        readonly property string currentKind: kindBox.currentValue ?? "smb"
+        readonly property bool kindSupported: currentKind !== "drive"
+
+        function openFor(source) {
+            editing = source;
+            srcNameField.text = source ? source.name : "";
+            secretField.text = "";
+            // Kind is locked when editing; select it (or default to SMB).
+            let kindIdx = 0;
+            if (source) {
+                for (let i = 0; i < root.sourceKinds.length; i++)
+                    if (root.sourceKinds[i].tag === source.kind) { kindIdx = i; break; }
+            }
+            kindBox.currentIndex = kindIdx;
+            open();
+        }
+
+        title: editing ? i18n("Edit source") : i18n("Add source")
+
+        Kirigami.FormLayout {
+            id: sourceForm
+
+            QQC2.TextField {
+                id: srcNameField
+                Kirigami.FormData.label: i18n("Name:")
+                enabled: sourceEditor.editing === null
+                placeholderText: i18n("e.g. work-share")
+            }
+            QQC2.ComboBox {
+                id: kindBox
+                Kirigami.FormData.label: i18n("Type:")
+                // Changing the type of an existing source rewrites its whole
+                // section; lock it on edit to avoid silent data loss.
+                enabled: sourceEditor.editing === null
+                model: root.sourceKinds
+                textRole: "label"
+                valueRole: "tag"
+            }
+
+            Kirigami.InlineMessage {
+                Kirigami.FormData.isSection: true
+                Layout.fillWidth: true
+                visible: !sourceEditor.kindSupported
+                type: Kirigami.MessageType.Information
+                text: i18n("Google Drive needs an OAuth sign-in flow that isn't wired up yet.")
+            }
+
+            // Per-kind connection fields, driven by sourceSchemas.
+            Repeater {
+                id: fieldsRepeater
+                model: root.sourceSchemas[sourceEditor.currentKind] || []
+                delegate: QQC2.TextField {
+                    required property var modelData
+                    property string fieldKey: modelData.key
+                    Kirigami.FormData.label: modelData.label
+                    placeholderText: modelData.placeholder || ""
+                    Component.onCompleted: {
+                        if (sourceEditor.editing && sourceEditor.editing.options)
+                            text = sourceEditor.editing.options[fieldKey] || "";
+                    }
+                }
+            }
+
+            QQC2.TextField {
+                id: secretField
+                visible: sourceEditor.kindSupported
+                Kirigami.FormData.label: i18n("Password:")
+                echoMode: TextInput.Password
+                placeholderText: (sourceEditor.editing && sourceEditor.editing.has_secret)
+                    ? i18n("•••• (leave blank to keep)")
+                    : i18n("required")
+            }
+        }
+
+        footer: QQC2.DialogButtonBox {
+            standardButtons: QQC2.DialogButtonBox.Ok | QQC2.DialogButtonBox.Cancel
+            // Disable OK until the source is valid enough to stage.
+            Component.onCompleted: {
+                let ok = standardButton(QQC2.DialogButtonBox.Ok);
+                ok.enabled = Qt.binding(() =>
+                    srcNameField.text.trim().length > 0 && sourceEditor.kindSupported);
+            }
+            onAccepted: {
+                let opts = {};
+                for (let i = 0; i < fieldsRepeater.count; i++) {
+                    let f = fieldsRepeater.itemAt(i);
+                    if (f && f.text.trim().length > 0) opts[f.fieldKey] = f.text.trim();
+                }
+                backend.upsertSource(srcNameField.text.trim(),
+                                     sourceEditor.currentKind,
+                                     JSON.stringify(opts),
+                                     secretField.text);
+                sourceEditor.close();
+            }
+            onRejected: sourceEditor.close()
+        }
+    }
+
+    // --- Mount editor -----------------------------------------------------
     Kirigami.OverlaySheet {
         id: mountEditor
 

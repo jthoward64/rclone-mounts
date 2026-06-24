@@ -70,14 +70,35 @@ mod ffi {
         /// Stage a mount for deletion (or drop a pending create).
         #[qinvokable]
         fn remove_mount(self: Pin<&mut BackendController>, name: &QString);
+
+        /// Create or replace a source in the pending changeset. `kind` is the
+        /// rclone type tag (smb/drive/webdav). `options_json` is a JSON object
+        /// of string→string connection params. `secret` sets/rotates the stored
+        /// password when non-empty; an empty string leaves the existing
+        /// credential untouched (write-only secret model).
+        #[qinvokable]
+        fn upsert_source(
+            self: Pin<&mut BackendController>,
+            name: &QString,
+            kind: &QString,
+            options_json: &QString,
+            secret: &QString,
+        );
+
+        /// Stage a source for deletion (or drop a pending create).
+        #[qinvokable]
+        fn remove_source(self: Pin<&mut BackendController>, name: &QString);
     }
 }
 
 use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
-use rclone_mounts_core::{Backend, Changeset, LocalBackend, Mount, SourceMetadata, State};
+use rclone_mounts_core::{
+    Backend, Changeset, LocalBackend, Mount, SourceDef, SourceKind, SourceMetadata, State,
+};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Default)]
@@ -116,14 +137,14 @@ impl From<&Mount> for MountView {
     }
 }
 
-/// UI-facing projection of a source. SMB-centric for now (host/user); richer
-/// per-kind fields land with the source editor.
+/// UI-facing projection of a source. Carries the full option map so the editor
+/// can prefill any per-kind field (host/url/user/…); `has_secret` drives the
+/// write-only password affordance (the secret itself is never read back).
 #[derive(Serialize)]
 struct SourceView {
     name: String,
     kind: String,
-    host: String,
-    user: String,
+    options: BTreeMap<String, String>,
     has_secret: bool,
 }
 
@@ -132,8 +153,7 @@ impl From<&SourceMetadata> for SourceView {
         Self {
             name: s.name.clone(),
             kind: s.kind.clone(),
-            host: s.options.get("host").cloned().unwrap_or_default(),
-            user: s.options.get("user").cloned().unwrap_or_default(),
+            options: s.options.clone(),
             has_secret: s.has_secret,
         }
     }
@@ -286,15 +306,65 @@ impl ffi::BackendController {
         self.as_mut().refresh();
     }
 
+    fn upsert_source(
+        mut self: Pin<&mut Self>,
+        name: &QString,
+        kind: &QString,
+        options_json: &QString,
+        secret: &QString,
+    ) {
+        let kind_tag = kind.to_string();
+        let Some(kind) = SourceKind::from_tag(&kind_tag) else {
+            self.as_mut()
+                .set_error_string(QString::from(format!("Unknown source type: {kind_tag}").as_str()));
+            return;
+        };
+        let options: BTreeMap<String, String> = match serde_json::from_str(&options_json.to_string()) {
+            Ok(o) => o,
+            Err(e) => {
+                self.as_mut()
+                    .set_error_string(QString::from(format!("Invalid source options: {e}").as_str()));
+                return;
+            }
+        };
+        let secret = secret.to_string();
+        let def = SourceDef {
+            name: name.to_string(),
+            kind,
+            options,
+            new_secret: if secret.is_empty() { None } else { Some(secret) },
+        };
+        {
+            let mut rust = self.as_mut().rust_mut();
+            let p = &mut rust.pending;
+            p.upsert_sources.retain(|s| s.name != def.name);
+            p.delete_sources.retain(|n| n != &def.name);
+            p.upsert_sources.push(def);
+        }
+        self.as_mut().set_error_string(QString::default());
+        self.as_mut().refresh();
+    }
+
+    fn remove_source(mut self: Pin<&mut Self>, name: &QString) {
+        let name = name.to_string();
+        let in_applied = self.as_ref().rust().applied.sources.iter().any(|s| s.name == name);
+        {
+            let mut rust = self.as_mut().rust_mut();
+            let p = &mut rust.pending;
+            p.upsert_sources.retain(|s| s.name != name);
+            if in_applied && !p.delete_sources.contains(&name) {
+                p.delete_sources.push(name);
+            }
+        }
+        self.as_mut().refresh();
+    }
+
     /// Recompute the displayed JSON + dirty flag from `applied` + `pending`.
     fn refresh(mut self: Pin<&mut Self>) {
         let (mounts_json, sources_json, dirty) = {
             let this = self.as_ref();
             let rust = this.rust();
-            let displayed = rust
-                .applied
-                .preview(&rust.pending)
-                .unwrap_or_else(|_| rust.applied.clone());
+            let displayed = rust.applied.preview(&rust.pending);
             let mounts: Vec<MountView> = displayed.mounts.iter().map(MountView::from).collect();
             let sources: Vec<SourceView> = displayed.sources.iter().map(SourceView::from).collect();
             (

@@ -96,10 +96,12 @@ impl LocalBackend {
 }
 
 impl State {
-    /// Fold a changeset onto this state without persisting anything, returning
-    /// what `apply` *would* produce. The KCM uses this to render pending edits
-    /// (the dirty preview) before the user clicks Apply.
-    pub fn preview(&self, cs: &Changeset) -> Result<State> {
+    /// Fold a changeset onto this state without persisting or validating,
+    /// returning what the on-disk state *would* look like. The KCM uses this to
+    /// render pending edits (the dirty preview) before the user clicks Apply.
+    /// Reference validation is deliberately skipped here so a mid-edit dangling
+    /// reference stays visible; `apply` enforces it.
+    pub fn preview(&self, cs: &Changeset) -> State {
         fold(self.clone(), cs)
     }
 }
@@ -150,7 +152,8 @@ impl Backend for LocalBackend {
 
         // 2. Fold the changeset into current state and cross-validate.
         let current = self.load().await?;
-        let target = fold(current, &changeset)?;
+        let target = fold(current, &changeset);
+        validate_references(&target)?;
 
         // 3. Persist sources.conf (round-trip preserving so untouched
         //    sections and outside-section comments survive).
@@ -275,7 +278,13 @@ impl Backend for HelperBackend {
     }
 }
 
-fn fold(mut state: State, cs: &Changeset) -> Result<State> {
+/// Apply a changeset to a state in memory. Pure structural fold — it does *not*
+/// check that every mount still references a live source; that's
+/// [`validate_references`], called only on the apply path. The UI's dirty
+/// preview ([`State::preview`]) folds without validating so a transient dangling
+/// reference (e.g. mid-edit, source deleted before its mount) stays visible
+/// instead of silently reverting the whole preview.
+fn fold(mut state: State, cs: &Changeset) -> State {
     for name in &cs.delete_sources {
         state.sources.retain(|s| s.name != *name);
     }
@@ -309,6 +318,12 @@ fn fold(mut state: State, cs: &Changeset) -> Result<State> {
         }
     }
 
+    state
+}
+
+/// Every mount must reference a source that exists in `state`. Enforced on the
+/// apply path so we never write a unit pointing at a missing remote.
+fn validate_references(state: &State) -> Result<()> {
     let source_names: std::collections::HashSet<_> =
         state.sources.iter().map(|s| s.name.as_str()).collect();
     for m in &state.mounts {
@@ -319,7 +334,7 @@ fn fold(mut state: State, cs: &Changeset) -> Result<State> {
             )));
         }
     }
-    Ok(state)
+    Ok(())
 }
 
 fn collect_section_options(doc: &Document, section: &str) -> BTreeMap<String, String> {
@@ -338,11 +353,7 @@ fn collect_section_options(doc: &Document, section: &str) -> BTreeMap<String, St
 }
 
 fn source_kind_str(kind: crate::source::SourceKind) -> &'static str {
-    match kind {
-        crate::source::SourceKind::Smb => "smb",
-        crate::source::SourceKind::Drive => "drive",
-        crate::source::SourceKind::WebDav => "webdav",
-    }
+    kind.as_tag()
 }
 
 /// rclone.conf fragment that becomes the credential payload. systemd decrypts

@@ -11,6 +11,29 @@ pub enum SourceKind {
     WebDav,
 }
 
+impl SourceKind {
+    /// The rclone `type=` tag for this kind. This is the canonical string form
+    /// used both in rclone.conf and across the QML bridge.
+    pub fn as_tag(&self) -> &'static str {
+        match self {
+            SourceKind::Smb => "smb",
+            SourceKind::Drive => "drive",
+            SourceKind::WebDav => "webdav",
+        }
+    }
+
+    /// Parse a kind from its rclone `type=` tag. `None` for anything we don't
+    /// model yet.
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "smb" => Some(SourceKind::Smb),
+            "drive" => Some(SourceKind::Drive),
+            "webdav" => Some(SourceKind::WebDav),
+            _ => None,
+        }
+    }
+}
+
 /// A configured rclone remote. The secret (if any) is never carried in this struct —
 /// the KCM is write-only on secrets and the credential lives in a separate store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
