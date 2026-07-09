@@ -75,6 +75,22 @@ impl Document {
             .collect()
     }
 
+    /// Every `key = value` pair in the named section, in file order. Empty if
+    /// the section doesn't exist. Lets callers read all of a section's options
+    /// without knowing the keys in advance.
+    pub fn section_entries(&self, section: &str) -> Vec<(&str, &str)> {
+        let Some((start, end)) = self.section_range(section) else {
+            return Vec::new();
+        };
+        self.lines[start..end]
+            .iter()
+            .filter_map(|l| match l {
+                Line::KeyValue { key, value, .. } => Some((key.as_str(), value.as_str())),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn get(&self, section: &str, key: &str) -> Option<&str> {
         let (start, end) = self.section_range(section)?;
         self.lines[start..end].iter().find_map(|l| match l {
@@ -275,6 +291,19 @@ url = https://dav.example.org
         let doc = Document::parse(SAMPLE).unwrap();
         assert_eq!(doc.get("work", "host"), Some("files.example.com"));
         assert_eq!(doc.get("home", "type"), Some("webdav"));
+    }
+
+    #[test]
+    fn section_entries_returns_all_keys_in_order() {
+        let doc = Document::parse(SAMPLE).unwrap();
+        assert_eq!(
+            doc.section_entries("work"),
+            vec![("type", "smb"), ("host", "files.example.com"), ("user", "alice")]
+        );
+        // A section with only a header yields nothing.
+        assert!(doc.section_entries("empty").is_empty());
+        // An unknown section yields nothing, not a panic.
+        assert!(doc.section_entries("nope").is_empty());
     }
 
     #[test]

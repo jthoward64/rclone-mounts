@@ -13,7 +13,10 @@ path = "src/main.rs"
 
 [dependencies]
 rclone-mounts-core.workspace = true
+serde_json.workspace = true
 zbus.workspace = true
+zbus_polkit.workspace = true
+enumflags2.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 tracing.workspace = true

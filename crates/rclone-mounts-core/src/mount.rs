@@ -27,7 +27,7 @@ impl Default for MountOptions {
             cache_mode: CacheMode::Writes,
             cache_max_size_mb: Some(2048),
             dir_cache_time_secs: Some(30),
-            umask: Some(0o022),
+            umask: Some(0o077),
             read_only: false,
         }
     }
@@ -43,6 +43,12 @@ pub struct Mount {
     pub display_name: String,
     /// Id of the source this mount uses.
     pub source: String,
+    /// Path within the source's remote to mount, instead of its root (rclone's
+    /// `remote:path` addressing — works the same for every source kind).
+    /// Empty means "mount the whole remote", matching mounts saved before
+    /// this field existed.
+    #[serde(default)]
+    pub subpath: String,
     pub mountpoint: PathBuf,
     pub options: MountOptions,
     pub enabled: bool,

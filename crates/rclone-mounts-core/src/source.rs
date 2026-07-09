@@ -3,12 +3,15 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
     Smb,
     Drive,
     WebDav,
+    Sftp,
+    Ftp,
+    IcloudDrive,
 }
 
 impl SourceKind {
@@ -19,6 +22,9 @@ impl SourceKind {
             SourceKind::Smb => "smb",
             SourceKind::Drive => "drive",
             SourceKind::WebDav => "webdav",
+            SourceKind::Sftp => "sftp",
+            SourceKind::Ftp => "ftp",
+            SourceKind::IcloudDrive => "iclouddrive",
         }
     }
 
@@ -29,8 +35,17 @@ impl SourceKind {
             "smb" => Some(SourceKind::Smb),
             "drive" => Some(SourceKind::Drive),
             "webdav" => Some(SourceKind::WebDav),
+            "sftp" => Some(SourceKind::Sftp),
+            "ftp" => Some(SourceKind::Ftp),
+            "iclouddrive" => Some(SourceKind::IcloudDrive),
             _ => None,
         }
+    }
+
+    /// True for kinds whose setup is a multi-step interactive flow (OAuth,
+    /// 2FA) rather than a static field form.
+    pub fn is_wizard_only(&self) -> bool {
+        matches!(self, SourceKind::Drive | SourceKind::IcloudDrive)
     }
 }
 
@@ -44,9 +59,21 @@ pub struct Source {
     pub has_secret: bool,
 }
 
-/// Pending-state definition: how the UI describes a desired source. `new_secret` is
-/// `Some(value)` only when the user is setting or rotating it; `None` means leave the
-/// stored credential untouched.
+/// One secret value bound for the credential blob. `obscure: true` means
+/// `value` is plaintext that must be run through `rclone obscure` before
+/// being written (e.g. `pass`); `false` means `value` is already in its final
+/// on-disk form (an OAuth `token` JSON blob, an iCloud trust token) and must
+/// be written byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretValue {
+    pub value: String,
+    pub obscure: bool,
+}
+
+/// Pending-state definition: how the UI describes a desired source.
+/// `new_secrets` carries only the secret keys being set or rotated; a key
+/// absent from the map means "leave that key's stored value untouched" (an
+/// empty map means no secret changes at all).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceDef {
     /// Internal id: rclone remote / file key. Slug, validated, immutable.
@@ -55,5 +82,5 @@ pub struct SourceDef {
     pub display_name: String,
     pub kind: SourceKind,
     pub options: BTreeMap<String, String>,
-    pub new_secret: Option<String>,
+    pub new_secrets: BTreeMap<String, SecretValue>,
 }

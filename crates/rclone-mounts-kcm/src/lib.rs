@@ -10,5 +10,3 @@ extern crate cxx_qt_lib_extras;
 extern crate cxx_kde_frameworks;
 
 pub mod backend_controller;
-pub mod mount_model;
-pub mod remote_model;

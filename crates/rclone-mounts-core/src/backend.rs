@@ -19,7 +19,7 @@ use crate::control::SystemdControl;
 use crate::credentials::Scope;
 use crate::mount::Mount;
 use crate::rclone_config::Document;
-use crate::source::SourceDef;
+use crate::source::{SourceDef, SourceKind};
 use crate::store::UnitStore;
 use crate::unit_writer;
 use crate::{credentials, rclone_cli, Error, Result};
@@ -45,6 +45,18 @@ pub trait Backend: Send + Sync {
     /// systemd `ActiveState` for the mount's unit: `active`, `inactive`,
     /// `failed`, `activating`, …
     async fn mount_status(&self, name: &str) -> Result<String>;
+
+    /// Store (or, if both are empty, clear) the system-scope admin override
+    /// for an OAuth-style kind's client id/secret — the middle tier of the
+    /// build-time < admin-override < per-source-user-override precedence.
+    /// Only meaningful in system scope; a user-scope backend has no
+    /// authority to set an org-wide default and rejects this.
+    async fn set_provider_override(&self, kind: SourceKind, client_id: &str, client_secret: &str) -> Result<()>;
+    /// The stored admin override for `kind`, if any. `None` in user scope
+    /// (there is no admin override to read there) or if nothing was set.
+    /// Never surfaced to QML raw — only consumed by credential-precedence
+    /// resolution and a has-value boolean (mirrors `has_secret`).
+    async fn provider_override(&self, kind: SourceKind) -> Result<Option<(String, String)>>;
 }
 
 /// The systemd unit name backing a mount. Single source of truth for the
@@ -117,17 +129,18 @@ impl LocalBackend {
 }
 
 impl LocalBackend {
-    /// Decrypt the existing credential for `name` (if any) and pull the stored
-    /// obscured password out of it, so a params-only source edit keeps the
-    /// password the user already set. Returns `None` when there's no credential
-    /// or it carries no password (a password-less source).
-    fn existing_obscured_pass(&self, name: &str) -> Result<Option<String>> {
+    /// Decrypt the existing credential for `name` (if any) and pull out
+    /// exactly the secret keys this `kind` is known to carry, so a
+    /// params-only source edit keeps whatever secrets the user already set.
+    /// Returns an empty map when there's no credential or it carries none of
+    /// `kind`'s secret keys.
+    fn existing_secrets(&self, name: &str, kind: SourceKind) -> Result<BTreeMap<String, String>> {
         let Some(encrypted) = self.store.read_credential(name)? else {
-            return Ok(None);
+            return Ok(BTreeMap::new());
         };
         let plain = credentials::decrypt(self.scope, &cred_id(), &encrypted)?;
         let text = String::from_utf8_lossy(&plain);
-        Ok(extract_pass(&text))
+        Ok(extract_secrets(&text, secret_keys_for(kind)))
     }
 }
 
@@ -147,22 +160,27 @@ impl Backend for LocalBackend {
     async fn load(&self) -> Result<State> {
         let sources_text = self.store.read_sources_conf()?;
         let doc = Document::parse(&sources_text)?;
-        let sources = doc
-            .sections()
-            .iter()
-            .map(|name| SourceMetadata {
+        let mut sources = Vec::new();
+        for name in doc.sections() {
+            let kind_tag = doc.get(name, "type").unwrap_or("");
+            sources.push(SourceMetadata {
                 name: name.to_string(),
                 // Old data (pre display names) has no display_name key; fall
                 // back to the id so it still shows something sensible.
-                display_name: doc
-                    .get(name, "display_name")
-                    .unwrap_or(name)
-                    .to_string(),
-                kind: doc.get(name, "type").unwrap_or("").to_string(),
+                display_name: doc.get(name, "display_name").unwrap_or(name).to_string(),
+                kind: kind_tag.to_string(),
                 options: collect_section_options(&doc, name),
-                has_secret: false, // probe pending; see [[probe-credential]]
-            })
-            .collect();
+                // A secret is "present" when the source's decrypted blob
+                // carries any of that kind's known secret keys. The blob
+                // exists for every source (it holds type+options too), so
+                // file existence alone isn't enough — this mirrors the
+                // `new_secrets.is_empty()` semantic the dirty-preview fold
+                // uses, so the flag is stable across apply.
+                has_secret: !self
+                    .existing_secrets(name, SourceKind::from_tag(kind_tag).unwrap_or(SourceKind::Smb))?
+                    .is_empty(),
+            });
+        }
 
         let mounts_text = self.store.read_mounts_state()?;
         let mut mounts = if mounts_text.is_empty() {
@@ -227,18 +245,24 @@ impl Backend for LocalBackend {
         self.store.write_sources_conf(&doc.render())?;
 
         // 4. Credentials. The encrypted blob is the *complete* rclone remote
-        //    section (type + options + obscured pass), so it must be rebuilt on
+        //    section (type + options + secrets), so it must be rebuilt on
         //    every source upsert — even a params-only edit, since the params
-        //    live inside the blob. When no new secret is supplied we decrypt the
-        //    existing blob to carry the stored password forward. This is the one
-        //    place a stored password is read back, and only by the process that
-        //    owns the store (the helper for system scope; the KCM for user scope).
+        //    live inside the blob. Secret keys not present in `new_secrets`
+        //    carry forward from the existing blob (decrypted and re-extracted
+        //    per that kind's known secret keys). This is the one place stored
+        //    secrets are read back, and only by the process that owns the
+        //    store (the helper for system scope; the KCM for user scope).
         for src in &changeset.upsert_sources {
-            let obscured_pass = match &src.new_secret {
-                Some(secret) => Some(rclone_cli::obscure(secret)?),
-                None => self.existing_obscured_pass(&src.name)?,
-            };
-            let blob = encode_credential_blob(src, obscured_pass.as_deref());
+            let mut secrets = self.existing_secrets(&src.name, src.kind)?;
+            for (key, secret) in &src.new_secrets {
+                let value = if secret.obscure {
+                    rclone_cli::obscure(&secret.value)?
+                } else {
+                    secret.value.clone()
+                };
+                secrets.insert(key.clone(), value);
+            }
+            let blob = encode_credential_blob(src, &secrets);
             let encrypted = credentials::encrypt(self.scope, &cred_id(), blob.as_bytes())?;
             self.store.write_credential(&src.name, &encrypted)?;
         }
@@ -303,6 +327,53 @@ impl Backend for LocalBackend {
         unit_writer::validate_name(name)?;
         self.control.active_state(&mount_unit_name(name)).await
     }
+
+    async fn set_provider_override(&self, kind: SourceKind, client_id: &str, client_secret: &str) -> Result<()> {
+        if !matches!(self.scope, Scope::System) {
+            return Err(Error::Systemd(
+                "Provider credential overrides are system-scope only.".into(),
+            ));
+        }
+        let name = provider_override_name(kind);
+        if client_id.is_empty() && client_secret.is_empty() {
+            self.store.delete_credential(&name)?;
+            return Ok(());
+        }
+        let blob = format!("[{name}]\nclient_id = {client_id}\nclient_secret = {client_secret}\n");
+        let encrypted = credentials::encrypt(self.scope, &cred_id(), blob.as_bytes())?;
+        self.store.write_credential(&name, &encrypted)?;
+        Ok(())
+    }
+
+    async fn provider_override(&self, kind: SourceKind) -> Result<Option<(String, String)>> {
+        // Only ever meaningful in system scope: a user-scope process can't
+        // decrypt system-scope credentials anyway (systemd-creds keys them
+        // off TPM2/the host key), so there's nothing to read here.
+        if !matches!(self.scope, Scope::System) {
+            return Ok(None);
+        }
+        let name = provider_override_name(kind);
+        let Some(encrypted) = self.store.read_credential(&name)? else {
+            return Ok(None);
+        };
+        let plain = credentials::decrypt(self.scope, &cred_id(), &encrypted)?;
+        let text = String::from_utf8_lossy(&plain);
+        let doc = Document::parse(&text)?;
+        let id = doc.get(&name, "client_id").unwrap_or("").to_string();
+        let secret = doc.get(&name, "client_secret").unwrap_or("").to_string();
+        if id.is_empty() || secret.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((id, secret)))
+    }
+}
+
+/// Reserved pseudo-source name for a kind's admin-override credential,
+/// stored via the same encrypted-credential machinery as a real source but
+/// never reachable as one: it starts with `_`, which `unit_writer::validate_name`
+/// already rejects for any user-supplied source/mount name.
+fn provider_override_name(kind: SourceKind) -> String {
+    format!("__provider_override_{}", kind.as_tag())
 }
 
 /// zbus client backend that forwards everything to the helper. Used by the KCM
@@ -327,33 +398,61 @@ impl HelperBackend {
     }
 }
 
+/// Whether the privileged helper is reachable at all — i.e. whether system
+/// scope is worth offering in the UI. Checks the bus itself (is the service
+/// name owned, or D-Bus-activatable) rather than calling into our own
+/// interface, so this never raises a Polkit prompt and never surfaces a
+/// scary error banner just because the helper isn't installed/enabled.
+pub async fn system_scope_available() -> bool {
+    let Ok(conn) = zbus::Connection::system().await else {
+        return false;
+    };
+    let Ok(proxy) = zbus::fdo::DBusProxy::new(&conn).await else {
+        return false;
+    };
+    if matches!(proxy.name_has_owner(HELPER_BUS.try_into().unwrap()).await, Ok(true)) {
+        return true;
+    }
+    match proxy.list_activatable_names().await {
+        Ok(names) => names.iter().any(|n| n.as_str() == HELPER_BUS),
+        Err(_) => false,
+    }
+}
+
 #[async_trait]
 impl Backend for HelperBackend {
     async fn load(&self) -> Result<State> {
         let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
-        let sources: Vec<(String, String, String, BTreeMap<String, String>)> =
+        let sources: Vec<(String, String, String, BTreeMap<String, String>, bool)> =
             proxy.call("ListSources", &()).await?;
-        let mounts: Vec<(String, String, String, String, bool)> =
+        // Mount tuning options ride the wire as a JSON blob (the fifth element):
+        // `MountOptions` is a small struct with optional/enum fields that don't
+        // map cleanly onto D-Bus basic types, and JSON keeps the helper and KCM
+        // agreeing on one serde representation.
+        let mounts: Vec<(String, String, String, String, String, String, bool)> =
             proxy.call("ListMounts", &()).await?;
         Ok(State {
             sources: sources
                 .into_iter()
-                .map(|(name, display_name, kind, options)| SourceMetadata {
+                .map(|(name, display_name, kind, options, has_secret)| SourceMetadata {
                     name,
                     display_name,
                     kind,
                     options,
-                    has_secret: false,
+                    has_secret,
                 })
                 .collect(),
             mounts: mounts
                 .into_iter()
-                .map(|(name, display_name, source, mountpoint, enabled)| Mount {
+                .map(|(name, display_name, source, subpath, mountpoint, options_json, enabled)| Mount {
                     name,
                     display_name,
                     source,
+                    subpath,
                     mountpoint: mountpoint.into(),
-                    options: Default::default(),
+                    // Tolerate a malformed/empty blob by falling back to
+                    // defaults rather than failing the whole load.
+                    options: serde_json::from_str(&options_json).unwrap_or_default(),
                     enabled,
                 })
                 .collect(),
@@ -387,6 +486,21 @@ impl Backend for HelperBackend {
         let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
         Ok(proxy.call("MountStatus", &(name,)).await?)
     }
+
+    async fn set_provider_override(&self, kind: SourceKind, client_id: &str, client_secret: &str) -> Result<()> {
+        let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
+        let _: () = proxy
+            .call("SetProviderOverride", &(kind.as_tag(), client_id, client_secret))
+            .await?;
+        Ok(())
+    }
+
+    async fn provider_override(&self, kind: SourceKind) -> Result<Option<(String, String)>> {
+        let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
+        let (has_value, client_id, client_secret): (bool, String, String) =
+            proxy.call("ProviderOverride", &(kind.as_tag(),)).await?;
+        Ok(has_value.then_some((client_id, client_secret)))
+    }
 }
 
 /// Apply a changeset to a state in memory. Pure structural fold — it does *not*
@@ -406,12 +520,12 @@ fn fold(mut state: State, cs: &Changeset) -> State {
             display_name: src.display_name.clone(),
             kind,
             options: src.options.clone(),
-            has_secret: src.new_secret.is_some(),
+            has_secret: !src.new_secrets.is_empty(),
         };
         if let Some(existing) = state.sources.iter_mut().find(|s| s.name == src.name) {
             let preserved = existing.has_secret;
             *existing = entry;
-            if src.new_secret.is_none() {
+            if src.new_secrets.is_empty() {
                 existing.has_secret = preserved;
             }
         } else {
@@ -450,50 +564,70 @@ fn validate_references(state: &State) -> Result<()> {
     Ok(())
 }
 
+/// Every connection option in a source's section. We read all keys rather than
+/// probe a fixed allowlist so a hand-edited `sources.conf` (or a new rclone
+/// option we don't model yet) round-trips instead of being silently dropped.
+/// The two keys we own — `type` (surfaced separately as `kind`) and our
+/// `display_name` metadata — are filtered out so they never leak into the
+/// options map, the credential blob, or the rclone remote definition.
 fn collect_section_options(doc: &Document, section: &str) -> BTreeMap<String, String> {
-    // The rclone_config crate doesn't yet expose all-keys iteration, so we
-    // probe known options. A future Document::iter_section() will replace this.
-    let mut out = BTreeMap::new();
-    for key in &[
-        "host", "url", "user", "domain", "port", "client_id", "client_secret", "token",
-        "scope", "team_drive", "root_folder_id", "vendor", "case_insensitive",
-    ] {
-        if let Some(v) = doc.get(section, key) {
-            out.insert((*key).to_string(), v.to_string());
-        }
-    }
-    out
+    doc.section_entries(section)
+        .into_iter()
+        .filter(|(k, _)| *k != "type" && *k != "display_name")
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 fn source_kind_str(kind: crate::source::SourceKind) -> &'static str {
     kind.as_tag()
 }
 
+/// The rclone config keys that hold sensitive material for each kind, kept
+/// out of `sources.conf` (plaintext) and stored only in the encrypted
+/// credential blob. An explicit, auditable table rather than "whatever's
+/// left over" — misclassifying a field here is a security bug, not just a
+/// UX one.
+pub fn secret_keys_for(kind: crate::source::SourceKind) -> &'static [&'static str] {
+    use crate::source::SourceKind::*;
+    match kind {
+        Smb | WebDav | Sftp | Ftp => &["pass"],
+        Drive => &["token", "client_secret"],
+        IcloudDrive => &["password", "trust_token"],
+    }
+}
+
 /// The complete rclone remote section that becomes the credential payload:
-/// `type`, every connection option, and the obscured password. systemd decrypts
-/// this into `%d/rclone-conf` at unit start; rclone reads it via
-/// `--config=%d/rclone-conf`, so the mount is fully self-contained and never
-/// touches `sources.conf` (which exists only as the KCM's editable record).
-fn encode_credential_blob(src: &SourceDef, obscured_pass: Option<&str>) -> String {
+/// `type`, every connection option, and every secret value for this kind.
+/// systemd decrypts this into `%d/rclone-conf` at unit start; rclone reads it
+/// via `--config=%d/rclone-conf`, so the mount is fully self-contained and
+/// never touches `sources.conf` (which exists only as the KCM's editable
+/// record). `secrets` values are already in their final on-disk form
+/// (obscured where rclone requires it) — see [`SourceDef::new_secrets`].
+fn encode_credential_blob(src: &SourceDef, secrets: &BTreeMap<String, String>) -> String {
     let mut out = format!("[{}]\ntype = {}\n", src.name, source_kind_str(src.kind));
     for (k, v) in &src.options {
         let _ = writeln!(out, "{k} = {v}");
     }
-    if let Some(pass) = obscured_pass {
-        let _ = writeln!(out, "pass = {pass}");
+    for key in secret_keys_for(src.kind) {
+        if let Some(value) = secrets.get(*key) {
+            let _ = writeln!(out, "{key} = {value}");
+        }
     }
     out
 }
 
-/// Pull the `pass = …` value out of a decrypted rclone-conf blob. Matches the
-/// `pass` key exactly (not `password`/other keys), tolerating optional spaces
-/// around `=`.
-fn extract_pass(blob: &str) -> Option<String> {
-    blob.lines().find_map(|line| {
-        let rest = line.trim().strip_prefix("pass")?.trim_start();
-        let value = rest.strip_prefix('=')?.trim();
-        Some(value.to_string())
-    })
+/// Pull exactly `keys` out of a decrypted rclone-conf blob, matching each key
+/// exactly (not prefixes of it), tolerating optional spaces around `=`.
+fn extract_secrets(blob: &str, keys: &[&str]) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for line in blob.lines() {
+        let Some(eq_idx) = line.find('=') else { continue };
+        let key = line[..eq_idx].trim();
+        if keys.contains(&key) {
+            out.insert(key.to_string(), line[eq_idx + 1..].trim().to_string());
+        }
+    }
+    out
 }
 
 fn cred_id() -> String {
@@ -605,13 +739,74 @@ mod tests {
         let mut options = BTreeMap::new();
         options.insert("host".into(), "files.example.com".into());
         options.insert("user".into(), "alice".into());
+        let mut new_secrets = BTreeMap::new();
+        if with_secret {
+            new_secrets.insert(
+                "pass".into(),
+                crate::source::SecretValue { value: "hunter2".into(), obscure: true },
+            );
+        }
         SourceDef {
             name: name.into(),
             display_name: name.into(),
             kind: SourceKind::Smb,
             options,
-            new_secret: if with_secret { Some("hunter2".into()) } else { None },
+            new_secrets,
         }
+    }
+
+    fn sftp_source(name: &str, with_secret: bool) -> SourceDef {
+        let mut options = BTreeMap::new();
+        options.insert("host".into(), "sftp.example.com".into());
+        options.insert("user".into(), "alice".into());
+        let mut new_secrets = BTreeMap::new();
+        if with_secret {
+            new_secrets.insert(
+                "pass".into(),
+                crate::source::SecretValue { value: "hunter2".into(), obscure: true },
+            );
+        }
+        SourceDef { name: name.into(), display_name: name.into(), kind: SourceKind::Sftp, options, new_secrets }
+    }
+
+    fn ftp_source(name: &str, with_secret: bool) -> SourceDef {
+        let mut options = BTreeMap::new();
+        options.insert("host".into(), "ftp.example.com".into());
+        let mut new_secrets = BTreeMap::new();
+        if with_secret {
+            new_secrets.insert(
+                "pass".into(),
+                crate::source::SecretValue { value: "hunter2".into(), obscure: true },
+            );
+        }
+        SourceDef { name: name.into(), display_name: name.into(), kind: SourceKind::Ftp, options, new_secrets }
+    }
+
+    #[test]
+    fn sftp_source_round_trips() {
+        let (_d, b) = fixture();
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![sftp_source("box", true)],
+            ..Default::default()
+        }))
+        .unwrap();
+        let state = async_io::block_on(b.load()).unwrap();
+        assert_eq!(state.sources[0].kind, "sftp");
+        assert_eq!(state.sources[0].options.get("host").map(String::as_str), Some("sftp.example.com"));
+        assert!(state.sources[0].has_secret);
+    }
+
+    #[test]
+    fn ftp_source_round_trips() {
+        let (_d, b) = fixture();
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![ftp_source("box", true)],
+            ..Default::default()
+        }))
+        .unwrap();
+        let state = async_io::block_on(b.load()).unwrap();
+        assert_eq!(state.sources[0].kind, "ftp");
+        assert!(state.sources[0].has_secret);
     }
 
     fn sample_mount(name: &str, source: &str) -> Mount {
@@ -619,6 +814,7 @@ mod tests {
             name: name.into(),
             display_name: name.into(),
             source: source.into(),
+            subpath: String::new(),
             mountpoint: PathBuf::from(format!("/tmp/mnt/{name}")),
             options: Default::default(),
             enabled: false,
@@ -649,6 +845,41 @@ mod tests {
         assert_eq!(src.kind, "smb");
         assert_eq!(src.options.get("host").map(String::as_str), Some("files.example.com"));
         assert_eq!(src.options.get("user").map(String::as_str), Some("alice"));
+        assert!(src.has_secret, "source created with a password should load as has_secret");
+    }
+
+    #[test]
+    fn load_preserves_options_outside_the_known_set() {
+        let (_d, b) = fixture();
+        let mut src = smb_source("work", false);
+        // A key the old hardcoded allowlist didn't include: it must still
+        // survive a write/read round-trip now that we read all section keys.
+        src.options.insert("spdif".into(), "yes".into());
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![src],
+            ..Default::default()
+        }))
+        .unwrap();
+        let state = async_io::block_on(b.load()).unwrap();
+        assert_eq!(
+            state.sources[0].options.get("spdif").map(String::as_str),
+            Some("yes")
+        );
+        // And our metadata keys never leak into the options map.
+        assert!(!state.sources[0].options.contains_key("type"));
+        assert!(!state.sources[0].options.contains_key("display_name"));
+    }
+
+    #[test]
+    fn passwordless_source_loads_without_secret() {
+        let (_d, b) = fixture();
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![smb_source("nopass", false)],
+            ..Default::default()
+        }))
+        .unwrap();
+        let state = async_io::block_on(b.load()).unwrap();
+        assert!(!state.sources[0].has_secret, "no secret was supplied");
     }
 
     #[test]
@@ -719,14 +950,31 @@ mod tests {
     }
 
     #[test]
-    fn extract_pass_matches_only_the_pass_key() {
-        assert_eq!(
-            extract_pass("[w]\ntype = smb\npass = ABC123\n").as_deref(),
-            Some("ABC123")
-        );
-        assert_eq!(extract_pass("pass=XYZ").as_deref(), Some("XYZ"));
-        assert_eq!(extract_pass("password = nope\n"), None);
-        assert_eq!(extract_pass("type = smb\nhost = h\n"), None);
+    fn extract_secrets_matches_only_requested_keys() {
+        let blob = "[w]\ntype = smb\npass = ABC123\ntoken = should-not-appear\n";
+        let found = extract_secrets(blob, &["pass"]);
+        assert_eq!(found.get("pass").map(String::as_str), Some("ABC123"));
+        assert!(!found.contains_key("token"), "token wasn't requested");
+        assert!(!found.contains_key("type"), "type isn't a secret key");
+
+        assert_eq!(extract_secrets("pass=XYZ", &["pass"]).get("pass").map(String::as_str), Some("XYZ"));
+        assert!(extract_secrets("password = nope\n", &["pass"]).is_empty(), "password != pass");
+        assert!(extract_secrets("type = smb\nhost = h\n", &["pass"]).is_empty());
+    }
+
+    #[test]
+    fn extract_secrets_pulls_multiple_keys() {
+        let blob = "[d]\ntype = drive\ntoken = {\"a\":1}\nclient_secret = shh\nroot_folder_id = xyz\n";
+        let found = extract_secrets(blob, secret_keys_for(SourceKind::Drive));
+        assert_eq!(found.len(), 2);
+        assert_eq!(found.get("token").map(String::as_str), Some("{\"a\":1}"));
+        assert_eq!(found.get("client_secret").map(String::as_str), Some("shh"));
+    }
+
+    #[test]
+    fn secret_keys_for_smb_and_webdav_is_just_pass() {
+        assert_eq!(secret_keys_for(SourceKind::Smb), &["pass"]);
+        assert_eq!(secret_keys_for(SourceKind::WebDav), &["pass"]);
     }
 
     fn decrypt_blob(b: &LocalBackend, name: &str) -> String {
@@ -748,7 +996,7 @@ mod tests {
             ..Default::default()
         }))
         .unwrap();
-        let original_pass = extract_pass(&decrypt_blob(&b, "work"));
+        let original_pass = extract_secrets(&decrypt_blob(&b, "work"), &["pass"]).remove("pass");
         assert!(original_pass.is_some(), "password should be stored on create");
 
         // Edit only the host; supply no new secret.
@@ -763,7 +1011,51 @@ mod tests {
         let blob = decrypt_blob(&b, "work");
         assert!(blob.contains("host = newhost.example.com"), "new host: {blob}");
         assert!(blob.contains("type = smb"), "type present: {blob}");
-        assert_eq!(extract_pass(&blob), original_pass, "password carried forward");
+        assert_eq!(
+            extract_secrets(&blob, &["pass"]).remove("pass"),
+            original_pass,
+            "password carried forward"
+        );
+    }
+
+    #[test]
+    fn multi_key_secret_round_trip_updates_one_key_and_preserves_the_other() {
+        let (_d, b) = fixture();
+        let mut drive = SourceDef {
+            name: "gd".into(),
+            display_name: "gd".into(),
+            kind: SourceKind::Drive,
+            options: BTreeMap::new(),
+            new_secrets: BTreeMap::from([
+                ("token".into(), crate::source::SecretValue { value: "tok-v1".into(), obscure: false }),
+                ("client_secret".into(), crate::source::SecretValue { value: "cs-v1".into(), obscure: true }),
+            ]),
+        };
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![drive.clone()],
+            ..Default::default()
+        }))
+        .unwrap();
+        let blob = decrypt_blob(&b, "gd");
+        let secrets = extract_secrets(&blob, secret_keys_for(SourceKind::Drive));
+        assert_eq!(secrets.get("token").map(String::as_str), Some("tok-v1"));
+        let obscured_cs_v1 = secrets.get("client_secret").cloned().unwrap();
+        assert_ne!(obscured_cs_v1, "cs-v1", "obscure:true value must not be stored as plaintext");
+
+        // Update only the token; leave client_secret untouched.
+        drive.new_secrets = BTreeMap::from([(
+            "token".into(),
+            crate::source::SecretValue { value: "tok-v2".into(), obscure: false },
+        )]);
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![drive],
+            ..Default::default()
+        }))
+        .unwrap();
+        let blob = decrypt_blob(&b, "gd");
+        let secrets = extract_secrets(&blob, secret_keys_for(SourceKind::Drive));
+        assert_eq!(secrets.get("token").map(String::as_str), Some("tok-v2"));
+        assert_eq!(secrets.get("client_secret"), Some(&obscured_cs_v1), "untouched key carried forward byte-for-byte");
     }
 
     #[test]
