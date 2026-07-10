@@ -16,6 +16,15 @@
 //! The mountpoint, credential path, and rclone binary location vary between
 //! user and system scope; callers pass a [`Context`] holding the resolved
 //! paths and specifier strings so the same `Mount` struct renders either form.
+//!
+//! A mount's `subpath` never appears in the unit file's text: when non-empty,
+//! [`crate::backend`] embeds it as an rclone `alias` remote's `remote =
+//! source:subpath` option inside the (already control-character-validated)
+//! encrypted config blob, and `ExecStart` here just references that alias by
+//! name (see [`mount_alias_name`]) instead of interpolating raw path text
+//! into `Exec*=`. Only the mountpoint itself still appears as unit-file
+//! text — rclone's `mount` subcommand has no config/env-var alternative to
+//! taking it as a positional argument.
 
 use crate::mount::{CacheMode, Mount};
 use crate::{Error, Result};
@@ -62,12 +71,39 @@ pub fn validate_name(name: &str) -> Result<()> {
     }
 }
 
+/// Reject a control character (newline, CR, NUL, ...) in a value that's
+/// about to be embedded in a generated systemd unit file. Unit files are
+/// parsed line-by-line, so `quote_unit_arg`'s quoting only protects against
+/// whitespace being split into extra argv words — it can't stop a literal
+/// embedded newline from ending the `Exec*=` line early and starting a new
+/// (attacker-chosen) directive on the next one. Rejecting the character
+/// outright is simpler and safer than trying to escape it away.
+pub fn reject_control_chars(field: &str, value: &str) -> Result<()> {
+    if value.chars().any(|c| c.is_control()) {
+        Err(Error::Systemd(format!(
+            "{field} can't contain control characters (like a newline)."
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// The rclone remote name a subpath mount's `alias` config entry is stored
+/// under (see [`crate::backend`]'s credential-blob builder). `MOUNT_` is an
+/// uppercase prefix a valid mount/source name (`^[a-z0-9][a-z0-9-]*$`,
+/// lowercase only) can never collide with, so this can never accidentally
+/// name-clash with the source's own section in the same config blob.
+pub fn mount_alias_name(mount_name: &str) -> String {
+    format!("MOUNT_{mount_name}")
+}
+
 pub fn render(mount: &Mount, ctx: &Context) -> Result<String> {
     validate_name(&mount.name)?;
     validate_name(&mount.source)?;
     let mountpoint = mount.mountpoint.to_str().ok_or_else(|| {
         Error::Systemd(format!("mountpoint is not valid UTF-8: {:?}", mount.mountpoint))
     })?;
+    reject_control_chars("The mount point", mountpoint)?;
 
     let mountpoint = systemd_mountpoint(mountpoint);
     let exec_start = build_exec_start(mount, ctx, &mountpoint);
@@ -120,20 +156,20 @@ pub fn render(mount: &Mount, ctx: &Context) -> Result<String> {
 }
 
 fn build_exec_start(mount: &Mount, ctx: &Context, mountpoint: &str) -> String {
+    // Empty subpath mounts the source directly; a non-empty one references
+    // the `alias` remote `crate::backend` folded into the source's config
+    // blob (`remote = source:subpath`) instead of interpolating the subpath
+    // text here — see the module doc comment.
+    let remote_spec = if mount.subpath.is_empty() {
+        format!("{}:", mount.source)
+    } else {
+        format!("{}:", mount_alias_name(&mount.name))
+    };
     let mut parts: Vec<String> = vec![
         ctx.rclone_binary.clone(),
         "mount".into(),
         "--config=%d/rclone-conf".into(),
-        // `%` is a systemd specifier prefix in ExecStart= — an unescaped one
-        // from a remote's path (e.g. a Nextcloud space id containing a
-        // literal `%`) makes systemd reject the whole unit with
-        // "BadUnitSetting" at load time, not just fail to expand. Same
-        // escaping as `systemd_mountpoint` below.
-        quote_unit_arg(&format!(
-            "{}:{}",
-            mount.source,
-            mount.subpath.trim_start_matches('/').replace('%', "%%")
-        )),
+        quote_unit_arg(&remote_spec),
         quote_unit_arg(mountpoint),
         format!("--vfs-cache-mode={}", cache_mode_str(mount.options.cache_mode)),
         // rclone's global flag is --log-systemd (routes logs to the journal and
@@ -315,11 +351,23 @@ mod tests {
     }
 
     #[test]
-    fn subpath_with_space_is_quoted_as_one_argument() {
+    fn non_empty_subpath_references_the_alias_remote_not_raw_text() {
         let mut m = sample_mount();
         m.subpath = "My Documents".into();
         let unit = render(&m, &user_ctx()).unwrap();
-        assert!(unit.contains("\"office-smb:My Documents\""));
+        // The subpath text itself never appears in the unit; ExecStart
+        // references the alias remote by name instead (its `remote =
+        // office-smb:My Documents` lives in the encrypted config blob —
+        // see `crate::backend`).
+        assert!(!unit.contains("My Documents"));
+        assert!(unit.contains(&format!("{}:", mount_alias_name("work"))));
+    }
+
+    #[test]
+    fn empty_subpath_mounts_the_source_directly() {
+        let unit = render(&sample_mount(), &user_ctx()).unwrap();
+        assert!(unit.contains("office-smb:"));
+        assert!(!unit.contains(&mount_alias_name("work")));
     }
 
     #[test]
@@ -349,6 +397,22 @@ mod tests {
 
         let mut m = sample_mount();
         m.source = "../bad".into();
+        assert!(render(&m, &user_ctx()).is_err());
+    }
+
+    #[test]
+    fn render_rejects_newline_in_mountpoint() {
+        let mut m = sample_mount();
+        m.mountpoint = PathBuf::from("/tmp/x\nExecStartPost=/bin/touch /tmp/pwned");
+        assert!(render(&m, &user_ctx()).is_err());
+    }
+
+    #[test]
+    fn render_rejects_other_control_chars_in_mountpoint() {
+        let mut m = sample_mount();
+        m.mountpoint = PathBuf::from("/tmp/a\rb");
+        assert!(render(&m, &user_ctx()).is_err());
+        m.mountpoint = PathBuf::from("/tmp/a\0b");
         assert!(render(&m, &user_ctx()).is_err());
     }
 }

@@ -26,7 +26,6 @@ use crate::{credentials, rclone_cli, Error, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
 /// Operations the KCM (and any other frontend) performs against a mount backend.
 /// Impls choose whether to run locally or proxy via D-Bus.
@@ -211,6 +210,16 @@ impl Backend for LocalBackend {
         for mount in &changeset.upsert_mounts {
             unit_writer::validate_name(&mount.name)?;
             unit_writer::validate_name(&mount.source)?;
+            // Checked up front (not just when step 4 folds this into the
+            // source's alias config, or inside `unit_writer::render` in step
+            // 6) so a bad value is rejected before sources.conf, credentials,
+            // or mounts.toml get written — otherwise this apply would fail
+            // partway through with those already persisted.
+            unit_writer::reject_control_chars("The subpath", &mount.subpath)?;
+            let mountpoint_str = mount.mountpoint.to_str().ok_or_else(|| {
+                Error::Systemd(format!("mountpoint is not valid UTF-8: {:?}", mount.mountpoint))
+            })?;
+            unit_writer::reject_control_chars("The mount point", mountpoint_str)?;
         }
         for name in &changeset.delete_mounts {
             unit_writer::validate_name(name)?;
@@ -218,8 +227,27 @@ impl Backend for LocalBackend {
 
         // 2. Fold the changeset into current state and cross-validate.
         let current = self.load().await?;
+        // Sources whose credential blob needs rebuilding in step 4: the
+        // source was itself upserted, or the set of subpath-mounts aliased
+        // into its blob is changing (a mount referencing it gained/lost/
+        // changed a subpath, including one being deleted outright — its
+        // stale alias must be dropped even though the source is otherwise
+        // untouched). Computed against `current` (pre-fold) for the delete
+        // case since `fold` consumes it below.
+        let mut sources_needing_credential_rewrite: std::collections::HashSet<String> =
+            changeset.upsert_sources.iter().map(|s| s.name.clone()).collect();
+        for m in &current.mounts {
+            if changeset.delete_mounts.contains(&m.name) && !m.subpath.is_empty() {
+                sources_needing_credential_rewrite.insert(m.source.clone());
+            }
+        }
         let target = fold(current, &changeset);
         validate_references(&target)?;
+        for m in &target.mounts {
+            if !m.subpath.is_empty() {
+                sources_needing_credential_rewrite.insert(m.source.clone());
+            }
+        }
 
         // 3. Persist sources.conf (round-trip preserving so untouched
         //    sections and outside-section comments survive).
@@ -233,38 +261,60 @@ impl Backend for LocalBackend {
             // an acceptable tradeoff against leaving stale keys behind on a
             // type change. Comments elsewhere are preserved.
             doc.remove_section(&src.name);
-            doc.set(&src.name, "type", source_kind_str(src.kind));
+            doc.set(&src.name, "type", source_kind_str(src.kind))?;
             // Our own metadata, not an rclone option; rclone never reads this
             // file (it reads the credential blob), so it's harmless here and is
             // filtered back out on load.
-            doc.set(&src.name, "display_name", &src.display_name);
+            doc.set(&src.name, "display_name", &src.display_name)?;
             for (k, v) in &src.options {
-                doc.set(&src.name, k, v);
+                doc.set(&src.name, k, v)?;
             }
         }
         self.store.write_sources_conf(&doc.render())?;
 
         // 4. Credentials. The encrypted blob is the *complete* rclone remote
-        //    section (type + options + secrets), so it must be rebuilt on
-        //    every source upsert — even a params-only edit, since the params
-        //    live inside the blob. Secret keys not present in `new_secrets`
-        //    carry forward from the existing blob (decrypted and re-extracted
-        //    per that kind's known secret keys). This is the one place stored
-        //    secrets are read back, and only by the process that owns the
-        //    store (the helper for system scope; the KCM for user scope).
-        for src in &changeset.upsert_sources {
-            let mut secrets = self.existing_secrets(&src.name, src.kind)?;
-            for (key, secret) in &src.new_secrets {
-                let value = if secret.obscure {
-                    rclone_cli::obscure(&secret.value)?
-                } else {
-                    secret.value.clone()
-                };
-                secrets.insert(key.clone(), value);
+        //    section (type + options + secrets) plus, for every mount that
+        //    uses this source with a non-empty subpath, an `alias` remote
+        //    entry (`remote = source:subpath`) — see `credential_document`
+        //    and `unit_writer::mount_alias_name`. Rebuilt for every source in
+        //    `sources_needing_credential_rewrite` (computed in step 2), which
+        //    covers a source upsert as well as a subpath-mount referencing it
+        //    being added, changed, or removed, even when the source itself
+        //    wasn't touched this apply. Secret keys not present in
+        //    `new_secrets` carry forward from the existing blob (decrypted
+        //    and re-extracted per that kind's known secret keys). This is the
+        //    one place stored secrets are read back, and only by the process
+        //    that owns the store (the helper for system scope; the KCM for
+        //    user scope).
+        for meta in &target.sources {
+            if !sources_needing_credential_rewrite.contains(&meta.name) {
+                continue;
             }
-            let blob = encode_credential_blob(src, &secrets);
-            let encrypted = credentials::encrypt(self.scope, &cred_id(), blob.as_bytes())?;
-            self.store.write_credential(&src.name, &encrypted)?;
+            let kind = SourceKind::from_tag(&meta.kind).unwrap_or(SourceKind::Smb);
+            let secrets = if let Some(src) = changeset.upsert_sources.iter().find(|s| s.name == meta.name) {
+                let mut secrets = self.existing_secrets(&src.name, src.kind)?;
+                for (key, secret) in &src.new_secrets {
+                    let value = if secret.obscure {
+                        rclone_cli::obscure(&secret.value)?
+                    } else {
+                        secret.value.clone()
+                    };
+                    secrets.insert(key.clone(), value);
+                }
+                secrets
+            } else {
+                self.existing_secrets(&meta.name, kind)?
+            };
+            let mut doc = credential_document(&meta.name, kind, &meta.options, &secrets)?;
+            for m in &target.mounts {
+                if m.source == meta.name && !m.subpath.is_empty() {
+                    let alias = unit_writer::mount_alias_name(&m.name);
+                    doc.set(&alias, "type", "alias")?;
+                    doc.set(&alias, "remote", &format!("{}:{}", meta.name, m.subpath))?;
+                }
+            }
+            let encrypted = credentials::encrypt(self.scope, &cred_id(), doc.render().as_bytes())?;
+            self.store.write_credential(&meta.name, &encrypted)?;
         }
         for name in &changeset.delete_sources {
             self.store.delete_credential(name)?;
@@ -339,7 +389,13 @@ impl Backend for LocalBackend {
             self.store.delete_credential(&name)?;
             return Ok(());
         }
-        let blob = format!("[{name}]\nclient_id = {client_id}\nclient_secret = {client_secret}\n");
+        // Built via `Document::set` (not raw string formatting) so a client_id
+        // or client_secret containing a control character is rejected here
+        // instead of corrupting the blob with a smuggled-in section/key.
+        let mut doc = Document::default();
+        doc.set(&name, "client_id", client_id)?;
+        doc.set(&name, "client_secret", client_secret)?;
+        let blob = doc.render();
         let encrypted = credentials::encrypt(self.scope, &cred_id(), blob.as_bytes())?;
         self.store.write_credential(&name, &encrypted)?;
         Ok(())
@@ -596,24 +652,40 @@ pub fn secret_keys_for(kind: crate::source::SourceKind) -> &'static [&'static st
     }
 }
 
-/// The complete rclone remote section that becomes the credential payload:
-/// `type`, every connection option, and every secret value for this kind.
-/// systemd decrypts this into `%d/rclone-conf` at unit start; rclone reads it
-/// via `--config=%d/rclone-conf`, so the mount is fully self-contained and
-/// never touches `sources.conf` (which exists only as the KCM's editable
-/// record). `secrets` values are already in their final on-disk form
-/// (obscured where rclone requires it) — see [`SourceDef::new_secrets`].
-fn encode_credential_blob(src: &SourceDef, secrets: &BTreeMap<String, String>) -> String {
-    let mut out = format!("[{}]\ntype = {}\n", src.name, source_kind_str(src.kind));
-    for (k, v) in &src.options {
-        let _ = writeln!(out, "{k} = {v}");
+/// Builds the base of a source's credential blob: `type`, every connection
+/// option, and every secret value for this kind. Returned as a `Document`
+/// (not yet rendered) so [`LocalBackend::apply`] can fold in each
+/// subpath-mount's `alias` remote entry before serializing — the whole
+/// point being that the subpath text lands *here*, inside the encrypted
+/// config, rather than as interpolated text in the generated unit file
+/// (see `unit_writer::mount_alias_name`). systemd decrypts the rendered
+/// result into `%d/rclone-conf` at unit start; rclone reads it via
+/// `--config=%d/rclone-conf`, so the mount is fully self-contained and never
+/// touches `sources.conf` (which exists only as the KCM's editable record).
+/// `secrets` values are already in their final on-disk form (obscured where
+/// rclone requires it) — see [`SourceDef::new_secrets`].
+///
+/// Built via `Document::set` (not raw string formatting) so an option or
+/// secret value containing a control character is rejected here rather than
+/// smuggling a fake `[section]`/extra key into the blob rclone reads back at
+/// mount time.
+fn credential_document(
+    name: &str,
+    kind: SourceKind,
+    options: &BTreeMap<String, String>,
+    secrets: &BTreeMap<String, String>,
+) -> Result<Document> {
+    let mut doc = Document::default();
+    doc.set(name, "type", source_kind_str(kind))?;
+    for (k, v) in options {
+        doc.set(name, k, v)?;
     }
-    for key in secret_keys_for(src.kind) {
+    for key in secret_keys_for(kind) {
         if let Some(value) = secrets.get(*key) {
-            let _ = writeln!(out, "{key} = {value}");
+            doc.set(name, key, value)?;
         }
     }
-    out
+    Ok(doc)
 }
 
 /// Pull exactly `keys` out of a decrypted rclone-conf blob, matching each key
@@ -925,6 +997,107 @@ mod tests {
         let unit = std::fs::read_to_string(&unit_path).unwrap();
         assert!(unit.contains("Description=rclone mount: work"));
         assert!(unit.contains("LoadCredentialEncrypted=rclone-conf:%h/.config/rclone-mounts/credentials/work"));
+    }
+
+    #[test]
+    fn subpath_mount_references_alias_not_raw_path_in_unit() {
+        let (dir, b) = fixture();
+        let mut mount = sample_mount("docs", "work");
+        mount.subpath = "My Documents".into();
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![smb_source("work", true)],
+            upsert_mounts: vec![mount],
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let unit = std::fs::read_to_string(dir.path().join("units/rclone-mount-docs.service")).unwrap();
+        // The subpath text itself never appears in the unit file...
+        assert!(!unit.contains("My Documents"), "subpath leaked into unit: {unit}");
+        // ...ExecStart references the alias remote instead, still keyed off
+        // the source's own credential blob (no new file/directory).
+        assert!(unit.contains("MOUNT_docs:"), "missing alias reference: {unit}");
+        assert!(unit.contains("LoadCredentialEncrypted=rclone-conf:%h/.config/rclone-mounts/credentials/work"));
+
+        // ...and the subpath lives in the source's encrypted config blob as
+        // an `alias` remote pointing at `source:subpath`.
+        let blob = decrypt_blob(&b, "work");
+        assert!(blob.contains("[MOUNT_docs]"), "missing alias section: {blob}");
+        assert!(blob.contains("type = alias"), "missing alias type: {blob}");
+        assert!(blob.contains("remote = work:My Documents"), "missing alias remote: {blob}");
+    }
+
+    #[test]
+    fn empty_subpath_mount_gets_no_alias_section() {
+        let (_d, b) = fixture();
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![smb_source("work", true)],
+            upsert_mounts: vec![sample_mount("work", "work")],
+            ..Default::default()
+        }))
+        .unwrap();
+        let blob = decrypt_blob(&b, "work");
+        assert!(!blob.contains("alias"), "no alias needed for a whole-remote mount: {blob}");
+    }
+
+    #[test]
+    fn two_mounts_of_one_source_get_independent_aliases() {
+        let (_d, b) = fixture();
+        let mut docs = sample_mount("docs", "work");
+        docs.subpath = "Documents".into();
+        let mut photos = sample_mount("photos", "work");
+        photos.subpath = "Photos".into();
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![smb_source("work", true)],
+            upsert_mounts: vec![docs, photos],
+            ..Default::default()
+        }))
+        .unwrap();
+        let blob = decrypt_blob(&b, "work");
+        assert!(blob.contains("remote = work:Documents"), "{blob}");
+        assert!(blob.contains("remote = work:Photos"), "{blob}");
+    }
+
+    #[test]
+    fn deleting_a_subpath_mount_drops_its_stale_alias() {
+        let (_d, b) = fixture();
+        let mut docs = sample_mount("docs", "work");
+        docs.subpath = "Documents".into();
+        async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![smb_source("work", true)],
+            upsert_mounts: vec![docs],
+            ..Default::default()
+        }))
+        .unwrap();
+        assert!(decrypt_blob(&b, "work").contains("MOUNT_docs"));
+
+        // Deleting the mount doesn't touch the source itself, but its stale
+        // alias must still be dropped from the source's blob.
+        async_io::block_on(b.apply(Changeset {
+            delete_mounts: vec!["docs".into()],
+            ..Default::default()
+        }))
+        .unwrap();
+        let blob = decrypt_blob(&b, "work");
+        assert!(!blob.contains("MOUNT_docs"), "stale alias survived deletion: {blob}");
+    }
+
+    #[test]
+    fn apply_rejects_newline_in_subpath_before_writing_anything() {
+        let (dir, b) = fixture();
+        let mut mount = sample_mount("docs", "work");
+        mount.subpath = "evil\n[backup]\ntype = drive".into();
+        let err = async_io::block_on(b.apply(Changeset {
+            upsert_sources: vec![smb_source("work", true)],
+            upsert_mounts: vec![mount],
+            ..Default::default()
+        }))
+        .unwrap_err();
+        assert!(matches!(err, Error::Systemd(_)), "got: {err:?}");
+        // Nothing was persisted: this is checked up front, before sources.conf
+        // or credentials are written.
+        assert!(!dir.path().join("config/sources.conf").exists());
+        assert!(!dir.path().join("creds/work").exists());
     }
 
     #[test]

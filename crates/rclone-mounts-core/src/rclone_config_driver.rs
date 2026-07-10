@@ -117,11 +117,20 @@ fn read_remote_section(scratch_path: &std::path::Path, remote_name: &str) -> Res
             "rclone finished but the scratch config has no [{remote_name}] section"
         )));
     }
-    let mut out = format!("[{remote_name}]\n");
-    for (k, v) in doc.section_entries(remote_name) {
-        out.push_str(&format!("{k} = {v}\n"));
+    // Re-emitted via `Document::set` (not raw string formatting) so this
+    // still refuses a control character even though the source here is
+    // rclone's own scratch file, not directly attacker-controlled input —
+    // one write path, one place that can reject a bad value.
+    let entries: Vec<(String, String)> = doc
+        .section_entries(remote_name)
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let mut out = crate::rclone_config::Document::default();
+    for (k, v) in &entries {
+        out.set(remote_name, k, v)?;
     }
-    Ok(out)
+    Ok(out.render())
 }
 
 /// Drives one `rclone config create`/`update --continue` session for a
@@ -135,11 +144,39 @@ pub struct ConfigDriver {
     remote_name: String,
 }
 
+/// Whether `key` is a password-type field for `kind_tag` that rclone stores
+/// obscured rather than in the clear. `rclone config create`'s positional
+/// `key value` args auto-obscure these; the `--<backend>-<option>` flag form
+/// we use instead to keep them off argv (see [`ConfigDriver::start`]) does
+/// not, so we have to obscure it ourselves before handing it over. Currently
+/// just iCloud Drive's account password — Drive's `client_secret` is an
+/// OAuth app secret rclone stores in the clear, not a user password.
+fn needs_obscure(kind_tag: &str, key: &str) -> bool {
+    matches!((kind_tag, key), ("iclouddrive", "password"))
+}
+
+/// The `RCLONE_<BACKEND>_<OPTION>` environment variable name rclone binds to
+/// the `--<backend>-<option>` backend flag, per rclone's standard "every
+/// flag is also an env var" convention.
+fn backend_option_env_var(kind_tag: &str, key: &str) -> String {
+    format!(
+        "RCLONE_{}_{}",
+        kind_tag.to_uppercase().replace('-', "_"),
+        key.to_uppercase().replace('-', "_")
+    )
+}
+
 impl ConfigDriver {
     /// Starts a fresh config session: `rclone config create <remote_name>
-    /// <kind_tag> [key value]... --non-interactive --config <scratch>`.
-    /// `initial_kv` seeds whatever's known up front (e.g. Drive's
-    /// `client_id`/`client_secret`/`scope`, or iCloud's `apple_id`/`password`).
+    /// <kind_tag> --non-interactive --config <scratch>`. `initial_kv` seeds
+    /// whatever's known up front (e.g. Drive's `client_id`/`client_secret`/
+    /// `scope`, or iCloud's `apple_id`/`password`) — these ride in as
+    /// `RCLONE_<BACKEND>_<OPTION>` environment variables on the child
+    /// process rather than as `key value` command-line arguments. Unlike
+    /// argv (world-readable via `ps`/`/proc/<pid>/cmdline` for the life of
+    /// the subprocess), a process's environment is only readable by its own
+    /// user and root, so this keeps the iCloud account password and any
+    /// OAuth client secret out of the one channel any local user can watch.
     pub fn start(kind_tag: &str, remote_name: &str, initial_kv: &BTreeMap<String, String>) -> Result<(Self, DriverStep)> {
         let scratch_config = tempfile::Builder::new()
             .prefix("rclone-mounts-scratch-")
@@ -154,7 +191,12 @@ impl ConfigDriver {
         let mut cmd = Command::new("rclone");
         cmd.arg("config").arg("create").arg(remote_name).arg(kind_tag);
         for (k, v) in initial_kv {
-            cmd.arg(k).arg(v);
+            let v = if needs_obscure(kind_tag, k) {
+                crate::rclone_cli::obscure(v)?
+            } else {
+                v.clone()
+            };
+            cmd.env(backend_option_env_var(kind_tag, k), v);
         }
         cmd.arg("--non-interactive")
             .arg("--config")

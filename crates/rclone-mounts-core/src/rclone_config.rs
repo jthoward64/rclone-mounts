@@ -101,7 +101,20 @@ impl Document {
 
     /// Insert or update a key in the named section. Creates the section at the
     /// end of the document if it doesn't exist.
-    pub fn set(&mut self, section: &str, key: &str, value: &str) {
+    ///
+    /// Rejects a `key`/`value` containing a control character (newline, CR,
+    /// NUL, ...) instead of trying to escape it: this is the single place
+    /// every INI-shaped file this app writes (`sources.conf`, the encrypted
+    /// credential blob, the provider-override blob) funnels through, so
+    /// blocking it here means no caller — including ones that don't know
+    /// about this concern — can ever smuggle a fake `[section]` header or
+    /// extra `key = value` line into a file we later re-parse as structure.
+    pub fn set(&mut self, section: &str, key: &str, value: &str) -> Result<(), Error> {
+        if key.chars().any(|c| c.is_control()) || value.chars().any(|c| c.is_control()) {
+            return Err(Error::ConfigParse(format!(
+                "\"{key}\" can't contain control characters (like a newline) here."
+            )));
+        }
         let canonical = format!("{key} = {value}\n");
         match self.section_range(section) {
             Some((start, end)) => {
@@ -113,7 +126,7 @@ impl Document {
                                 value: value.to_string(),
                                 raw: canonical,
                             };
-                            return;
+                            return Ok(());
                         }
                     }
                 }
@@ -147,6 +160,7 @@ impl Document {
                 });
             }
         }
+        Ok(())
     }
 
     /// Remove a section and all its keys (but leave preceding comments alone).
@@ -316,7 +330,7 @@ url = https://dav.example.org
     #[test]
     fn set_updates_existing_key_in_place() {
         let mut doc = Document::parse(SAMPLE).unwrap();
-        doc.set("work", "host", "new.example.com");
+        doc.set("work", "host", "new.example.com").unwrap();
         assert_eq!(doc.get("work", "host"), Some("new.example.com"));
         // The comment above [work] survives.
         assert!(doc.render().contains("; top of file comment"));
@@ -327,7 +341,7 @@ url = https://dav.example.org
     #[test]
     fn set_inserts_new_key_into_existing_section() {
         let mut doc = Document::parse(SAMPLE).unwrap();
-        doc.set("work", "domain", "EXAMPLE");
+        doc.set("work", "domain", "EXAMPLE").unwrap();
         let out = doc.render();
         // New key is inside [work] section, not at the top.
         let work_idx = out.find("[work]").unwrap();
@@ -339,9 +353,32 @@ url = https://dav.example.org
     #[test]
     fn set_creates_new_section_at_end() {
         let mut doc = Document::parse(SAMPLE).unwrap();
-        doc.set("backup", "type", "drive");
+        doc.set("backup", "type", "drive").unwrap();
         let out = doc.render();
         assert!(out.ends_with("[backup]\ntype = drive\n"));
+    }
+
+    #[test]
+    fn set_rejects_embedded_newline_in_value() {
+        let mut doc = Document::parse(SAMPLE).unwrap();
+        let err = doc.set("work", "host", "evil\n[backup]\ntype = drive").unwrap_err();
+        assert!(matches!(err, Error::ConfigParse(_)));
+        // Nothing was written: the document is untouched.
+        assert_eq!(doc.get("work", "host"), Some("files.example.com"));
+        assert!(!doc.sections().contains(&"backup"));
+    }
+
+    #[test]
+    fn set_rejects_embedded_newline_in_key() {
+        let mut doc = Document::parse(SAMPLE).unwrap();
+        assert!(doc.set("work", "host\n[backup]", "x").is_err());
+    }
+
+    #[test]
+    fn set_rejects_carriage_return_and_nul() {
+        let mut doc = Document::default();
+        assert!(doc.set("s", "k", "a\rb").is_err());
+        assert!(doc.set("s", "k", "a\0b").is_err());
     }
 
     #[test]
