@@ -9,5 +9,5 @@ X-KDE-Library=plasma/kcms/kcm_rclone_mounts
 X-KDE-ParentApp=kcontrol
 X-KDE-System-Settings-Parent-Category=network
 
-Name=rclone Mounts
+Name=Rclone Mounts
 Comment=Manage rclone-backed mounts (SMB, Drive, WebDAV)

@@ -1,6 +1,6 @@
 {
     "KPlugin": {
-        "Name": "rclone Mounts",
+        "Name": "Rclone Mounts",
         "Description": "Manage rclone-backed mounts (SMB, Drive, WebDAV)",
         "Icon": "folder-cloud-symbolic",
         "Category": "Network",
