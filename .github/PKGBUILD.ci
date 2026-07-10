@@ -26,6 +26,10 @@ makedepends=(
     'corrosion'
     'rust'
 )
+# The cxx-qt "initializers.o" objects are plain rustc-produced machine code
+# (not LTO bitcode); GCC's default LTO link drops their static-constructor
+# symbols (undefined reference to `cxx_qt_init_*`), so LTO must stay off.
+options=('!lto')
 source=()
 sha256sums=()
 
@@ -35,6 +39,12 @@ sha256sums=()
 pkgver() {
     cd "$startdir"
     grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/'
+}
+
+prepare() {
+    cd "$startdir"
+    export CARGO_HOME="$startdir/.cargo-home"
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {

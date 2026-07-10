@@ -24,7 +24,8 @@ jobs:
             cmake extra-cmake-modules corrosion \
             qt6-base qt6-declarative \
             kcoreaddons ki18n kcmutils \
-            rust
+            rust \
+            rclone polkit systemd
 
       - name: Checkout
         uses: actions/checkout@v7
