@@ -7,57 +7,37 @@ import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-// Just the fields for adding/editing a source — no dialog/page chrome, so
-// the same form can be hosted in either SourceEditorDialog (Kirigami.Dialog)
-// or SourceEditorPage (a pushed Kirigami.ScrollablePage). See Main.qml's
-// `editorPresentation` for which one is actually used.
+// Just the fields for editing an existing source, hosted by SourceEditorPage
+// (the right-hand pane). Adding a new source is a fully separate flow
+// (SourceAddWizardDialog), so this form only ever has `editing` set and
+// never picks a kind. There is no Save/Cancel here: every field commits
+// straight into the pending changeset as it's edited (see commitLive()
+// below), and the KCM's own Apply/Cancel/Defaults is what actually writes
+// it to disk or discards it.
 ColumnLayout {
     id: root
 
     required property var helpers
-    // null → create; otherwise editing an existing source (name is the key).
-    property var editing: null
+    required property var backend
+    // Always set — this form is edit-only.
+    required property var editing
 
-    // Reads straight from `editing` when editing, rather than
-    // `kindBox.currentValue`: QQC2.ComboBox's `currentValue` lags one tick
-    // behind `currentIndex` when the index is set programmatically during
-    // construction (confirmed via logging — currentIndex was already 1 while
-    // currentValue/fieldsRepeater still saw the previous kind), so deriving
-    // currentKind from it caused fieldsRepeater's model to briefly build the
-    // wrong kind's fields, then immediately rebuild with the right ones —
-    // the exact child-churn-mid-construction pattern that trips a real bug
-    // in Kirigami.FormLayout (relayout() dereferences a transiently null
-    // `item`; see FormLayout.qml:348/397/468). `root.editing.kind` is
-    // available synchronously with no such lag.
-    readonly property string currentKind: root.editing ? root.editing.kind : (kindBox.currentValue ?? "smb")
-    // Wizard-only kinds (OAuth/2FA backends) are configured through
-    // SourceWizard, not this flat-field form; the wrapper checks this to
-    // decide whether accepting hands off to the wizard instead of upserting.
+    signal reconnectRequested()
+
+    readonly property string currentKind: root.editing.kind
+    // Wizard-only kinds (OAuth/2FA backends) are reconfigured through
+    // SourceWizard, not this flat-field form; the "Reconnect…" message below
+    // is the only affordance shown for them.
     readonly property bool kindSupported: !root.helpers.kindIsWizardOnly(currentKind)
-    // Every `required` field (see source_schema.rs) needs a real value, not
-    // just a non-empty display name — rclone can't connect without them.
-    function allRequiredFieldsFilled() {
-        for (let i = 0; i < fieldsRepeater.count; i++) {
-            let f = fieldsRepeater.itemAt(i);
-            if (f && f.modelData.required && f.fieldValueOrNull === null) return false;
-        }
-        return true;
-    }
-    // Wizard-only kinds collect the name in SourceWizard instead — this
-    // form's name field is hidden for them, so it shouldn't gate acceptance.
-    readonly property bool acceptable: root.kindSupported
-        ? (srcNameField.text.trim().length > 0 && allRequiredFieldsFilled())
-        : true
+    readonly property bool acceptable: srcNameField.text.trim().length > 0 && fieldsRepeater.allRequiredFieldsFilled()
 
     function reset() {
-        srcNameField.text = root.editing ? root.editing.display_name : "";
+        srcNameField.text = root.editing.display_name;
         secretField.text = "";
-        // kindBox.currentIndex is NOT set here — see its own binding for why.
     }
 
     // Collects the current field values into the shape `backend.upsertSource`
-    // expects. Only meaningful when `kindSupported` — wizard-only kinds are
-    // handed off to SourceWizard instead.
+    // expects.
     function collect() {
         let opts = {};
         for (let i = 0; i < fieldsRepeater.count; i++) {
@@ -65,12 +45,21 @@ ColumnLayout {
             if (f && f.fieldValueOrNull !== null) opts[f.fieldKey] = f.fieldValueOrNull;
         }
         return {
-            id: root.editing ? root.editing.name : "",
+            id: root.editing.name,
             displayName: srcNameField.text.trim(),
             kind: root.currentKind,
             optionsJson: JSON.stringify(opts),
             secret: secretField.text
         };
+    }
+
+    // Stages the current field values. A no-op while required fields aren't
+    // filled in yet.
+    function commitLive() {
+        if (!root.kindSupported || !root.acceptable)
+            return;
+        let v = root.collect();
+        root.backend.upsertSource(v.id, v.displayName, v.kind, v.optionsJson, v.secret);
     }
 
     Component.onCompleted: root.reset()
@@ -84,94 +73,38 @@ ColumnLayout {
             visible: root.kindSupported
             Kirigami.FormData.label: i18n("Name:")
             placeholderText: i18n("e.g. Work share")
+            onEditingFinished: root.commitLive()
         }
-        QQC2.ComboBox {
-            id: kindBox
+        QQC2.Label {
+            // A source's type can't be changed after creation — rewriting
+            // its whole section risks silent data loss — so this is a plain
+            // label, not the enabled ComboBox the add wizard uses.
             Kirigami.FormData.label: i18n("Type:")
-            // Changing the type of an existing source rewrites its whole
-            // section; lock it on edit to avoid silent data loss.
-            enabled: root.editing === null
-            model: root.helpers.sourceKinds
-            textRole: "label"
-            valueRole: "tag"
-            // A real binding evaluated as part of construction — not set
-            // imperatively in reset()/Component.onCompleted. This ComboBox
-            // drives fieldsRepeater's model (via currentKind below); setting
-            // it *after* the FormLayout's first layout pass made the
-            // Repeater tear down its "smb"-fallback delegates and build the
-            // real kind's the moment reset() ran, which is exactly the
-            // child-churn-mid-construction pattern that trips a real bug in
-            // Kirigami.FormLayout (relayout() dereferences a transiently
-            // null `item` — see FormLayout.qml:348/397/468). Getting this
-            // right on the very first evaluation means the Repeater's model
-            // is correct from the start and never has to swap.
-            currentIndex: {
-                if (!root.editing) return 0;
-                for (let i = 0; i < root.helpers.sourceKinds.length; i++)
-                    if (root.helpers.sourceKinds[i].tag === root.editing.kind) return i;
-                return 0;
+            text: root.helpers.kindLabel(root.currentKind)
+        }
+
+        RowLayout {
+            Kirigami.FormData.isSection: true
+            visible: !root.kindSupported
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: i18n("This source's sign-in is managed by its setup wizard.")
+            }
+            QQC2.Button {
+                text: i18n("Reconnect…")
+                onClicked: root.reconnectRequested()
             }
         }
 
-        // Per-kind connection fields, driven by the kind's schema. Each
-        // delegate carries both a text field and a checkbox, toggling which
-        // is visible by field_type — Kirigami.FormLayout needs a real
-        // Control as its direct child for its accessibility/label wiring, so
-        // a Loader delegate (whose `item` isn't ready synchronously) doesn't
-        // work here.
-        Repeater {
+        SourceKindFieldsRepeater {
             id: fieldsRepeater
-            model: (root.helpers.kindSchema(root.currentKind) || { fields: [] }).fields
-            delegate: RowLayout {
-                id: fieldRow
-                required property var modelData
-                readonly property string fieldKey: modelData.key
-                readonly property bool isBool: modelData.field_type === "bool"
-                readonly property bool isSelect: modelData.field_type === "select"
-                // null means "omit this field" (blank text, an unchecked
-                // bool, or a select left on its blank/default choice).
-                readonly property var fieldValueOrNull: {
-                    if (isBool) return boolControl.checked ? "true" : "false";
-                    if (isSelect) return (selectControl.currentValue || "").length > 0 ? selectControl.currentValue : null;
-                    return textControl.text.trim().length > 0 ? textControl.text.trim() : null;
-                }
-                Kirigami.FormData.label: modelData.required ? i18n("%1 *", modelData.label) : modelData.label
-
-                QQC2.TextField {
-                    id: textControl
-                    Layout.fillWidth: true
-                    visible: !fieldRow.isBool && !fieldRow.isSelect
-                    placeholderText: fieldRow.modelData.placeholder || ""
-                    Component.onCompleted: {
-                        if (root.editing && root.editing.options)
-                            text = root.editing.options[fieldRow.fieldKey] || "";
-                    }
-                }
-                QQC2.CheckBox {
-                    id: boolControl
-                    visible: fieldRow.isBool
-                    Component.onCompleted: {
-                        if (root.editing && root.editing.options)
-                            checked = root.editing.options[fieldRow.fieldKey] === "true";
-                    }
-                }
-                QQC2.ComboBox {
-                    id: selectControl
-                    Layout.fillWidth: true
-                    visible: fieldRow.isSelect
-                    model: fieldRow.modelData.options || []
-                    textRole: "label"
-                    valueRole: "value"
-                    Component.onCompleted: {
-                        if (root.editing && root.editing.options) {
-                            let v = root.editing.options[fieldRow.fieldKey] || "";
-                            for (let i = 0; i < model.length; i++) {
-                                if (model[i].value === v) { currentIndex = i; break; }
-                            }
-                        }
-                    }
-                }
-            }
+            helpers: root.helpers
+            // Wizard-only kinds have nothing to show here — reconnecting is
+            // handled by SourceWizard instead of this flat form.
+            kind: root.kindSupported ? root.currentKind : ""
+            editing: root.editing
+            onFieldEdited: root.commitLive()
         }
 
         QQC2.TextField {
@@ -179,9 +112,10 @@ ColumnLayout {
             visible: root.kindSupported
             Kirigami.FormData.label: i18n("Password:")
             echoMode: TextInput.Password
-            placeholderText: (root.editing && root.editing.has_secret)
+            placeholderText: root.editing.has_secret
                 ? i18n("•••• (leave blank to keep)")
                 : i18n("password")
+            onEditingFinished: root.commitLive()
         }
     }
 }

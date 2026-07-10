@@ -107,7 +107,12 @@ mod ffi {
         /// (empty mounts the whole remote). `options_json` is a JSON object of
         /// the mount's tuning options (cache mode, size caps, umask, read-only);
         /// it deserializes straight into `MountOptions`, falling back to
-        /// defaults if it can't be read.
+        /// defaults if it can't be read. Returns the mount's resolved id (the
+        /// freshly-derived one when `id` was empty, `id` unchanged otherwise) so
+        /// a caller creating a new mount can pass it back on every subsequent
+        /// live edit instead of leaving `id` empty and getting a fresh (and
+        /// divergent) slug derived from a since-changed `display_name` each
+        /// time. Empty on validation failure.
         #[qinvokable]
         fn upsert_mount(
             self: Pin<&mut BackendController>,
@@ -118,7 +123,7 @@ mod ffi {
             mountpoint: &QString,
             options_json: &QString,
             enabled: bool,
-        );
+        ) -> QString;
 
         /// Stage a mount for deletion (or drop a pending create).
         #[qinvokable]
@@ -130,6 +135,8 @@ mod ffi {
         /// `options_json` is a JSON object of string→string connection params.
         /// `secret` sets/rotates the stored password when non-empty; an empty
         /// string leaves the existing credential untouched (write-only secret).
+        /// Returns the source's resolved id, same reasoning as `upsert_mount`'s
+        /// return value. Empty on validation failure.
         #[qinvokable]
         fn upsert_source(
             self: Pin<&mut BackendController>,
@@ -138,7 +145,7 @@ mod ffi {
             kind: &QString,
             options_json: &QString,
             secret: &QString,
-        );
+        ) -> QString;
 
         /// Stage a source for deletion (or drop a pending create).
         #[qinvokable]
@@ -897,7 +904,7 @@ impl ffi::BackendController {
         mountpoint: &QString,
         options_json: &QString,
         enabled: bool,
-    ) {
+    ) -> QString {
         // A malformed blob shouldn't lose the user's edit; fall back to the
         // default tuning and surface a note. An empty string (older callers /
         // no options) also lands on defaults.
@@ -921,7 +928,7 @@ impl ffi::BackendController {
         let display = display_name.to_string();
         let id = self.as_ref().resolve_id(&id.to_string(), &display, false);
         let mount = Mount {
-            name: id,
+            name: id.clone(),
             display_name: display,
             source: source.to_string(),
             subpath: subpath.to_string().trim_matches('/').to_string(),
@@ -937,6 +944,7 @@ impl ffi::BackendController {
             p.upsert_mounts.push(mount);
         }
         self.as_mut().refresh();
+        QString::from(id.as_str())
     }
 
     fn remove_mount(mut self: Pin<&mut Self>, name: &QString) {
@@ -962,24 +970,24 @@ impl ffi::BackendController {
         kind: &QString,
         options_json: &QString,
         secret: &QString,
-    ) {
+    ) -> QString {
         let kind_tag = kind.to_string();
         let Some(kind) = SourceKind::from_tag(&kind_tag) else {
             self.as_mut()
                 .set_error_string(QString::from(format!("“{kind_tag}” isn’t a source type this version supports.").as_str()));
-            return;
+            return QString::default();
         };
         let options: BTreeMap<String, String> = match serde_json::from_str(&options_json.to_string()) {
             Ok(o) => o,
             Err(e) => {
                 self.as_mut()
                     .set_error_string(QString::from(format!("Those source settings couldn’t be read. {e}").as_str()));
-                return;
+                return QString::default();
             }
         };
         if let Err(e) = rclone_mounts_core::source_schema::validate_options_against_schema(&kind_tag, &options) {
             self.as_mut().set_error_string(QString::from(e.as_str()));
-            return;
+            return QString::default();
         }
         let secret = secret.to_string();
         let display = display_name.to_string();
@@ -989,7 +997,7 @@ impl ffi::BackendController {
             new_secrets.insert("pass".to_string(), SecretValue { value: secret, obscure: true });
         }
         let def = SourceDef {
-            name: id,
+            name: id.clone(),
             display_name: display,
             kind,
             options,
@@ -1004,6 +1012,7 @@ impl ffi::BackendController {
         }
         self.as_mut().set_error_string(QString::default());
         self.as_mut().refresh();
+        QString::from(id.as_str())
     }
 
     fn remove_source(mut self: Pin<&mut Self>, name: &QString) {

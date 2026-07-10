@@ -5,15 +5,29 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.kirigami.layouts as KirigamiLayouts
 import org.kde.kcmutils as KCM
 import dev.jthoward.RcloneMounts
 
 // Root: wires the backend, the scope switcher, and the local PageRow that
-// hosts every page (the unified list, Credentials, and — when
-// `editorPresentation === "page"` — the source/mount editors). `AbstractKCM`
-// (not `SimpleKCM`) because PageRow's pages manage their own scrolling; a
-// second, outer ScrollablePage would just fight it. See the design notes in
-// MainListPage.qml and Source/MountEditorPage.qml for how pages get pushed.
+// hosts every page. The list stays pinned as the first column and an editor
+// pane (source edit, mount add/edit, credentials) is pushed as the second —
+// see the `columnView.columnResizeMode` override below for why that second
+// column never collapses the list out of view. `AbstractKCM` (not
+// `SimpleKCM`) because PageRow's pages manage their own scrolling; a second,
+// outer ScrollablePage would just fight it. Adding a source is the one
+// exception to the pushed-pane pattern: it's always the `SourceAddWizardDialog`
+// below, since that flow is inherently interactive (kind/name, then either
+// flat fields or an OAuth/2FA handoff to `SourceWizard`).
+//
+// Nothing here forwards actions to the host's own title bar — `AbstractKCM.actions`
+// is left at its default (empty). Editing a source/mount has no Save/Cancel
+// of its own either: SourceEditorForm/MountEditorForm stage every field
+// edit straight into the pending changeset live (see their commitLive()),
+// so the KCM's own built-in Apply/Cancel/Defaults is the only commit/discard
+// control anywhere. MainListPage and CredentialsPage do still carry their
+// own in-content footers, but only for things that aren't a save/cancel
+// gesture (Add source…, Credentials…, Close).
 //
 // Note on ids below: none of them are named after the properties they get
 // bound to elsewhere (e.g. the BackendController's id is `backendController`,
@@ -24,16 +38,15 @@ import dev.jthoward.RcloneMounts
 KCM.AbstractKCM {
     id: root
 
-    // Flip this to "dialog" to feel out Kirigami.Dialog instead of a pushed
-    // page for adding/editing sources and mounts — everything else about the
-    // editors (SourceEditorForm/MountEditorForm) is shared between both.
-    readonly property string editorPresentation: "page"
-
-    // The host (System Settings / kcmshell6) renders title-bar actions from
-    // *this* root item, not from whichever page is currently active inside
-    // our nested PageRow — so the currently-visible inner page's actions
-    // have to be forwarded up here, or they simply never appear anywhere.
-    actions: pageRowItem.currentItem ? pageRowItem.currentItem.actions : []
+    // Best-effort floor on the host window's width: with the list column
+    // pinned via `columnView.columnResizeMode` below, the pane pushed next
+    // to it (source/mount editor, credentials) has nowhere to go if the
+    // window shrinks past both columns' combined width other than getting
+    // clipped. Hinting a minimum here asks the host (System Settings /
+    // kcmshell6) not to let that happen instead. Scales with `depth` so a
+    // list-only view (nothing pushed yet) doesn't force a wide window before
+    // there's a second column to make room for.
+    Layout.minimumWidth: pageRowItem.defaultColumnWidth * Math.max(pageRowItem.depth, 1)
 
     BackendController {
         id: backendController
@@ -74,53 +87,55 @@ KCM.AbstractKCM {
         backendController.setScope(system);
     }
 
-    // Pages pushed by URL (not by an inline `Component { ... }` block) so
-    // required properties are set the ordinary way via push()'s properties
-    // argument — the same mechanism PageRow's own push()/getPageComponent()
-    // uses for string/url pages.
+    // Editing an existing source always pushes SourceEditorPage as the
+    // second PageRow column (see the `columnView.columnResizeMode` override
+    // below for why that never hides the list); adding a new source is a
+    // fully separate flow, always the wizard dialog. Pages are pushed by URL
+    // (not by an inline `Component { ... }` block) so required properties
+    // are set the ordinary way via push()'s properties argument — the same
+    // mechanism PageRow's own push()/getPageComponent() uses for
+    // string/url pages.
     function openSourceEditor(source) {
+        if (!source) {
+            sourceAddWizard.openFor();
+            return;
+        }
         // `currentItem` tracks column focus, not "the page you just pushed"
         // — PageRow can show the list and a detail page side by side, and
         // currentItem stayed on the list unless focus was moved explicitly.
         // `lastItem` is the rightmost/most-recently-pushed page, which is
         // what "is this source's editor already open?" actually means.
         let cur = pageRowItem.lastItem;
-        if (source && cur && cur.pageKind === "sourceEditor" && cur.editing && cur.editing.name === source.name)
+        if (cur && cur.pageKind === "sourceEditor" && cur.editing && cur.editing.name === source.name)
             return;
-        if (root.editorPresentation === "dialog") {
-            sourceEditorDialog.openFor(source);
-        } else {
-            let props = { backend: backendController, helpers: uiHelpers, pageRow: pageRowItem, editing: source };
-            // Switching from editing one source to another should swap out
-            // the detail page, not stack a second one next to it.
-            let page = pageRowItem.depth > 1
-                ? pageRowItem.replace(Qt.resolvedUrl("SourceEditorPage.qml"), props)
-                : pageRowItem.push(Qt.resolvedUrl("SourceEditorPage.qml"), props);
-            page.wizardHandoff.connect((kind, editing) => sourceWizard.openFor(kind, editing));
-        }
+        let props = { backend: backendController, helpers: uiHelpers, pageRow: pageRowItem, editing: source };
+        // Switching from editing one source to another should swap out the
+        // detail page, not stack a second one next to it. `replace()` acts
+        // on `currentIndex` (column focus), which the list column can hold
+        // even while an editor is open — using it here would pop the list
+        // itself off the stack instead of the editor. Pop back to the list
+        // explicitly first so the target is unambiguous.
+        if (pageRowItem.depth > 1)
+            pageRowItem.pop(mainListPage);
+        let page = pageRowItem.push(Qt.resolvedUrl("SourceEditorPage.qml"), props);
+        page.wizardHandoff.connect((kind, editing) => sourceWizard.openFor(kind, editing));
     }
 
     function openMountEditor(mount, presetSource) {
         let cur = pageRowItem.lastItem;
         if (mount && cur && cur.pageKind === "mountEditor" && cur.editing && cur.editing.name === mount.name)
             return;
-        if (root.editorPresentation === "dialog") {
-            mountEditorDialog.sources = JSON.parse(backendController.sourcesJson || "[]");
-            mountEditorDialog.openFor(mount, presetSource);
-        } else {
-            let props = {
-                backend: backendController,
-                helpers: uiHelpers,
-                pageRow: pageRowItem,
-                editing: mount,
-                sources: JSON.parse(backendController.sourcesJson || "[]"),
-                presetSource: presetSource
-            };
-            if (pageRowItem.depth > 1)
-                pageRowItem.replace(Qt.resolvedUrl("MountEditorPage.qml"), props);
-            else
-                pageRowItem.push(Qt.resolvedUrl("MountEditorPage.qml"), props);
-        }
+        let props = {
+            backend: backendController,
+            helpers: uiHelpers,
+            pageRow: pageRowItem,
+            editing: mount,
+            sources: JSON.parse(backendController.sourcesJson || "[]"),
+            presetSource: presetSource
+        };
+        if (pageRowItem.depth > 1)
+            pageRowItem.pop(mainListPage);
+        pageRowItem.push(Qt.resolvedUrl("MountEditorPage.qml"), props);
     }
 
     // Poll live mount status whenever there are applied mounts on screen, in
@@ -207,6 +222,15 @@ KCM.AbstractKCM {
             // graphical object was not placed in the graphics scene"
             // warning and a blank page.
             initialPage: mainListPage
+
+            // PageRow normally drops to SingleColumn mode (hiding earlier
+            // columns behind whatever's on top) once its width falls below
+            // `defaultColumnWidth * 2` — see PageRow.qml's `wideMode`/
+            // `columnResizeMode` binding. The list must stay visible at all
+            // times, including in a narrow window, so pin this instead:
+            // the columns become horizontally scrollable rather than
+            // collapsing.
+            columnView.columnResizeMode: KirigamiLayouts.ColumnView.FixedColumns
         }
     }
 
@@ -218,20 +242,15 @@ KCM.AbstractKCM {
         onEditSourceRequested: source => root.openSourceEditor(source)
         onAddMountRequested: source => root.openMountEditor(null, source)
         onEditMountRequested: mount => root.openMountEditor(mount, null)
-        onOpenCredentialsRequested: pageRowItem.push(Qt.resolvedUrl("CredentialsPage.qml"), { backend: backendController })
+        onOpenCredentialsRequested: pageRowItem.push(Qt.resolvedUrl("CredentialsPage.qml"), { backend: backendController, pageRow: pageRowItem })
     }
 
-    // --- Source/mount editors: dialog variants (editorPresentation === "dialog") ---
-    SourceEditorDialog {
-        id: sourceEditorDialog
+    // --- Add-source wizard dialog (the only way a new source is created) --
+    SourceAddWizardDialog {
+        id: sourceAddWizard
         backend: backendController
         helpers: uiHelpers
         onWizardHandoff: (kind, editing) => sourceWizard.openFor(kind, editing)
-    }
-    MountEditorDialog {
-        id: mountEditorDialog
-        backend: backendController
-        helpers: uiHelpers
     }
 
     // --- Interactive source wizard (Google Drive OAuth, iCloud 2FA) -------

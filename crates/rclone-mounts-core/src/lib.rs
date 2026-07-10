@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 pub mod backend;
+pub mod backend_features;
 pub mod control;
 pub mod credentials;
 pub mod error;

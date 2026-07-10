@@ -60,24 +60,26 @@ Kirigami.ScrollablePage {
 
     title: i18n("Mounts")
 
-    // Rendered by the host (System Settings / kcmshell6) in the page's own
-    // title bar, matching how every other KCM ("Online Accounts", etc.)
-    // puts its primary action next to the title. Adding a mount is always
-    // done from a specific source's row (below), not globally here, since
-    // a mount always belongs to exactly one source.
-    actions: [
-        Kirigami.Action {
-            icon.name: "list-add-symbolic"
-            text: i18n("Add source…")
-            onTriggered: root.addSourceRequested()
-        },
-        Kirigami.Action {
-            icon.name: "settings-configure-symbolic"
-            text: i18n("Credentials…")
-            visible: root.backend.systemScope
-            onTriggered: root.openCredentialsRequested()
+    // No top-bar actions — both buttons live in this page's own footer,
+    // bottom-aligned to the list instead of in the host's title bar. Adding
+    // a mount is always done from a specific source's row (below), not
+    // globally here, since a mount always belongs to exactly one source.
+    footer: QQC2.ToolBar {
+        contentItem: RowLayout {
+            QQC2.Button {
+                icon.name: "list-add-symbolic"
+                text: i18n("Add source…")
+                onClicked: root.addSourceRequested()
+            }
+            Item { Layout.fillWidth: true }
+            QQC2.Button {
+                icon.name: "settings-configure-symbolic"
+                text: i18n("Credentials…")
+                visible: root.backend.systemScope
+                onClicked: root.openCredentialsRequested()
+            }
         }
-    ]
+    }
 
     ListView {
         id: listView

@@ -3,8 +3,11 @@
 import QtQuick
 import org.kde.kirigami as Kirigami
 
-// Pushed-page presentation of MountEditorForm. See Main.qml's
-// `editorPresentation` for how this is chosen over MountEditorDialog.
+// Pushed onto Main.qml's PageRow as the right-hand edit pane for both
+// adding and editing a mount — mounts never go through a dialog. No
+// Save/Cancel here: MountEditorForm stages every edit into the pending
+// changeset live as it's made, and the KCM's own Apply/Cancel/Defaults is
+// what actually commits or discards it.
 Kirigami.ScrollablePage {
     id: root
 
@@ -24,29 +27,9 @@ Kirigami.ScrollablePage {
 
     title: root.editing ? i18n("Edit mount") : i18n("Add mount")
 
-    // Rendered by the host in the page's own title bar; the automatic back
-    // button PageRow gives pushed pages covers Cancel. Labelled by what it
-    // actually does (stage the mount into the pending changeset) rather
-    // than a generic "OK", since the KCM's own Apply button — which is what
-    // actually writes it to disk — sits right below and a bare "OK" here
-    // reads as a duplicate of it.
-    actions: [
-        Kirigami.Action {
-            text: root.editing ? i18n("Save changes") : i18n("Add mount")
-            icon.name: "dialog-ok"
-            enabled: form.acceptable
-            onTriggered: root.accept()
-        }
-    ]
-
-    function accept() {
-        let v = form.collect();
-        root.backend.upsertMount(v.id, v.displayName, v.source, v.subpath, v.mountpoint, v.optionsJson, v.enabled);
-        root.pageRow.pop();
-    }
-
     MountEditorForm {
         id: form
+        backend: root.backend
         helpers: root.helpers
         sources: root.sources
         editing: root.editing

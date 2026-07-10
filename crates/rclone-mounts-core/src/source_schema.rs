@@ -54,6 +54,18 @@ pub struct KindSchema {
     /// 2FA) rather than a static field form. The flat-schema editor doesn't
     /// apply; `fields` is empty for these.
     pub wizard_only: bool,
+    /// From `backend_features::lookup` — whether this backend can stream an
+    /// upload without buffering it first. Drives the KCM's cache-mode
+    /// warning (mirrors rclone's own "it can't stream" mount-time log line).
+    /// WebDAV's real value depends on its `vendor` option, not the kind
+    /// alone, so it's fixed `false` here (true for every vendor except
+    /// `rclone`) and the KCM overrides it per-source; see
+    /// `backend_features::webdav_put_stream`.
+    pub put_stream: bool,
+    /// From `backend_features::lookup` — whether this backend allows
+    /// duplicate filenames within a directory (a FUSE mount can only show
+    /// one entry per name).
+    pub duplicate_files: bool,
 }
 
 const fn text(key: &'static str, label: &'static str, placeholder: &'static str) -> FieldSchema {
@@ -128,6 +140,8 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         icon: "folder-network-symbolic",
         fields: SMB_FIELDS,
         wizard_only: false,
+        put_stream: true,
+        duplicate_files: false,
     },
     KindSchema {
         tag: "webdav",
@@ -135,6 +149,9 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         icon: "folder-cloud-symbolic",
         fields: WEBDAV_FIELDS,
         wizard_only: false,
+        // Real value is vendor-dependent — see the field doc comment above.
+        put_stream: false,
+        duplicate_files: false,
     },
     KindSchema {
         tag: "sftp",
@@ -142,6 +159,8 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         icon: "folder-network-symbolic",
         fields: SFTP_FIELDS,
         wizard_only: false,
+        put_stream: true,
+        duplicate_files: false,
     },
     KindSchema {
         tag: "ftp",
@@ -149,6 +168,8 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         icon: "folder-network-symbolic",
         fields: FTP_FIELDS,
         wizard_only: false,
+        put_stream: true,
+        duplicate_files: false,
     },
     KindSchema {
         tag: "drive",
@@ -156,6 +177,8 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         icon: "folder-google-drive",
         fields: DRIVE_FIELDS,
         wizard_only: true,
+        put_stream: true,
+        duplicate_files: true,
     },
     KindSchema {
         tag: "iclouddrive",
@@ -163,6 +186,8 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         icon: "folder-cloud-symbolic",
         fields: &[],
         wizard_only: true,
+        put_stream: false,
+        duplicate_files: false,
     },
 ];
 
@@ -236,6 +261,25 @@ mod tests {
         assert!(json.len() > 10);
         for kind in all_kind_schemas() {
             assert!(json.contains(kind.tag), "missing {} in serialized schema", kind.tag);
+        }
+    }
+
+    // Every kind's put_stream/duplicate_files must match
+    // backend_features::lookup — catches the schema entry going stale after
+    // the reference table is updated (or vice versa). WebDAV is excluded:
+    // its true value is vendor-dependent, not a fixed per-kind fact (see
+    // `backend_features::webdav_put_stream`), so KindSchema intentionally
+    // carries a fixed `false` fallback there instead of a table lookup.
+    #[test]
+    fn kind_schema_features_match_backend_features_table() {
+        for kind in all_kind_schemas() {
+            if kind.tag == "webdav" {
+                continue;
+            }
+            let expected = crate::backend_features::lookup(kind.tag)
+                .unwrap_or_else(|| panic!("{} is missing from backend_features::BACKEND_FEATURES", kind.tag));
+            assert_eq!(kind.put_stream, expected.put_stream, "put_stream mismatch for {}", kind.tag);
+            assert_eq!(kind.duplicate_files, expected.duplicate_files, "duplicate_files mismatch for {}", kind.tag);
         }
     }
 

@@ -14,8 +14,17 @@ Kirigami.ScrollablePage {
     id: root
 
     required property var backend
+    required property var pageRow
 
     title: i18n("Credentials")
+
+    // No top-bar actions — every pushed page dismisses itself via its own
+    // footer instead.
+    footer: QQC2.DialogButtonBox {
+        standardButtons: QQC2.DialogButtonBox.Close
+        onRejected: root.pageRow.pop()
+        onAccepted: root.pageRow.pop()
+    }
 
     readonly property var kinds: JSON.parse(backend.credentialKindsJson || "[]")
 
