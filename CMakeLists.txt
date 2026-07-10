@@ -70,6 +70,16 @@ kcoreaddons_add_plugin(kcm_rclone_mounts
     INSTALL_NAMESPACE "plasma/kcms"
 )
 
+# The Rust staticlib's own Qt usage (cxx-qt-lib's bindings, compiled by
+# cxx-qt-build/corrosion, not visible to CMake) is invisible to the linker's
+# dependency graph until the archive is scanned, which happens last. Under
+# --as-needed (the modern default nearly everywhere, including Arch's
+# packaging LDFLAGS), the linker drops each Qt/KF6 .so's exports before
+# reaching the archive that needs them, since nothing appeared to need them
+# yet. --no-as-needed keeps every library's exports available regardless of
+# scan order.
+target_link_options(kcm_rclone_mounts PRIVATE "LINKER:--no-as-needed")
+
 target_link_libraries(kcm_rclone_mounts PRIVATE
     Qt6::Core
     Qt6::Quick
