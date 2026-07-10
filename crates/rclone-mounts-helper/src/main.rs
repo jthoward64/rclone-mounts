@@ -11,12 +11,12 @@
 //! diffable in logs, and TOML's strictness about unknown fields gives us a
 //! clean rejection path when the KCM and helper drift apart in version.
 
+use enumflags2::BitFlags;
 use rclone_mounts_core::backend::{Backend, Changeset, LocalBackend, SourceMetadata};
 use rclone_mounts_core::control::system::SystemSystemd;
 use rclone_mounts_core::credentials::Scope;
 use rclone_mounts_core::source::SourceKind;
 use rclone_mounts_core::store::local::LocalUnitStore;
-use enumflags2::BitFlags;
 use std::collections::HashMap;
 use std::future::pending;
 use zbus::message::Header;
@@ -136,7 +136,15 @@ impl Helper {
             .map(|m| {
                 let mp = m.mountpoint.to_string_lossy().into_owned();
                 let options = serde_json::to_string(&m.options).unwrap_or_else(|_| "{}".into());
-                (m.name, m.display_name, m.source, m.subpath, mp, options, m.enabled)
+                (
+                    m.name,
+                    m.display_name,
+                    m.source,
+                    m.subpath,
+                    mp,
+                    options,
+                    m.enabled,
+                )
             })
             .collect())
     }

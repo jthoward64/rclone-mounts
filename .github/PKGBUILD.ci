@@ -1,0 +1,59 @@
+# Maintainer: Tag Howard <tag@jthoward.dev>
+#
+# CI/release build: packages the checked-out working tree directly
+# (no network fetch of sources). For AUR, use the VCS-style PKGBUILD
+# at the repository root instead, which clones from the git remote.
+pkgname=rclone-mounts
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="Plasma System Settings KCM for managing rclone-backed mounts (SMB, Drive, WebDAV)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/jthoward64/rclone-mounts"
+license=('GPL-2.0-or-later')
+depends=(
+    'qt6-base'
+    'qt6-declarative'
+    'kcoreaddons'
+    'ki18n'
+    'kcmutils'
+    'rclone'
+    'polkit'
+    'systemd'
+)
+makedepends=(
+    'cmake'
+    'extra-cmake-modules'
+    'corrosion'
+    'rust'
+)
+source=()
+sha256sums=()
+
+# No sources to fetch/extract: build directly against the working tree
+# that this PKGBUILD was invoked from ($startdir), not $srcdir.
+
+pkgver() {
+    cd "$startdir"
+    grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/'
+}
+
+build() {
+    cd "$startdir"
+
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR="$startdir/target"
+    export CARGO_HOME="$startdir/.cargo-home"
+    export CARGO_NET_OFFLINE=true
+
+    cmake -B build -S . \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DBUILD_TESTING=OFF \
+        -Wno-dev
+    cmake --build build
+}
+
+package() {
+    cd "$startdir"
+    DESTDIR="$pkgdir" cmake --install build
+}

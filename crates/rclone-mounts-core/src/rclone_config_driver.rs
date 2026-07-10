@@ -43,7 +43,10 @@ impl DriverPrompt {
     pub fn looks_like_2fa(&self) -> bool {
         let name = self.name.to_ascii_lowercase();
         let help = self.help.to_ascii_lowercase();
-        name.contains("2fa") || name.contains("code") || help.contains("2fa") || help.contains("two-factor")
+        name.contains("2fa")
+            || name.contains("code")
+            || help.contains("2fa")
+            || help.contains("two-factor")
     }
 
     pub fn looks_like_local_browser_choice(&self) -> bool {
@@ -55,9 +58,14 @@ impl DriverPrompt {
 pub enum DriverStep {
     /// Config finished. `remote_conf` is the complete rclone.conf-shaped
     /// `[<remote_name>]` section, read from the scratch config file.
-    Done { remote_conf: String },
+    Done {
+        remote_conf: String,
+    },
     /// rclone needs one more answer to proceed.
-    NeedInput { state: String, prompt: DriverPrompt },
+    NeedInput {
+        state: String,
+        prompt: DriverPrompt,
+    },
     Error(String),
 }
 
@@ -82,10 +90,17 @@ struct RawOption {
 }
 
 impl DriverStep {
-    fn from_stdout(stdout: &str, scratch_path: &std::path::Path, remote_name: &str) -> Result<Self> {
+    fn from_stdout(
+        stdout: &str,
+        scratch_path: &std::path::Path,
+        remote_name: &str,
+    ) -> Result<Self> {
         let trimmed = stdout.trim();
-        let raw: RawStep = serde_json::from_str(trimmed)
-            .map_err(|e| Error::Systemd(format!("couldn't parse `rclone config` output: {e} (got: {trimmed:?})")))?;
+        let raw: RawStep = serde_json::from_str(trimmed).map_err(|e| {
+            Error::Systemd(format!(
+                "couldn't parse `rclone config` output: {e} (got: {trimmed:?})"
+            ))
+        })?;
         if !raw.error.is_empty() {
             return Ok(DriverStep::Error(raw.error));
         }
@@ -100,7 +115,11 @@ impl DriverStep {
         };
         Ok(DriverStep::NeedInput {
             state: raw.state,
-            prompt: DriverPrompt { name: opt.name, help: opt.help, is_password: opt.is_password },
+            prompt: DriverPrompt {
+                name: opt.name,
+                help: opt.help,
+                is_password: opt.is_password,
+            },
         })
     }
 }
@@ -177,7 +196,11 @@ impl ConfigDriver {
     /// the subprocess), a process's environment is only readable by its own
     /// user and root, so this keeps the iCloud account password and any
     /// OAuth client secret out of the one channel any local user can watch.
-    pub fn start(kind_tag: &str, remote_name: &str, initial_kv: &BTreeMap<String, String>) -> Result<(Self, DriverStep)> {
+    pub fn start(
+        kind_tag: &str,
+        remote_name: &str,
+        initial_kv: &BTreeMap<String, String>,
+    ) -> Result<(Self, DriverStep)> {
         let scratch_config = tempfile::Builder::new()
             .prefix("rclone-mounts-scratch-")
             .tempfile()
@@ -185,11 +208,17 @@ impl ConfigDriver {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(scratch_config.path(), std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(
+                scratch_config.path(),
+                std::fs::Permissions::from_mode(0o600),
+            );
         }
 
         let mut cmd = Command::new("rclone");
-        cmd.arg("config").arg("create").arg(remote_name).arg(kind_tag);
+        cmd.arg("config")
+            .arg("create")
+            .arg(remote_name)
+            .arg(kind_tag);
         for (k, v) in initial_kv {
             let v = if needs_obscure(kind_tag, k) {
                 crate::rclone_cli::obscure(v)?
@@ -203,7 +232,10 @@ impl ConfigDriver {
             .arg(scratch_config.path());
 
         let step = run(&mut cmd, scratch_config.path(), remote_name)?;
-        let driver = Self { scratch_config, remote_name: remote_name.to_string() };
+        let driver = Self {
+            scratch_config,
+            remote_name: remote_name.to_string(),
+        };
         Ok((driver, step))
     }
 
@@ -280,13 +312,18 @@ mod tests {
     #[test]
     fn empty_state_reads_finished_remote_section() {
         let json = r#"{"State":"","Option":null,"Error":""}"#;
-        let scratch = scratch_with("[gd]\ntype = drive\ntoken = {\"access_token\":\"x\"}\n\n[other]\ntype = smb\n");
+        let scratch = scratch_with(
+            "[gd]\ntype = drive\ntoken = {\"access_token\":\"x\"}\n\n[other]\ntype = smb\n",
+        );
         let step = DriverStep::from_stdout(json, scratch.path(), "gd").unwrap();
         match step {
             DriverStep::Done { remote_conf } => {
                 assert!(remote_conf.contains("type = drive"));
                 assert!(remote_conf.contains("token ="));
-                assert!(!remote_conf.contains("other"), "must not leak unrelated sections: {remote_conf}");
+                assert!(
+                    !remote_conf.contains("other"),
+                    "must not leak unrelated sections: {remote_conf}"
+                );
             }
             other => panic!("expected Done, got {other:?}"),
         }

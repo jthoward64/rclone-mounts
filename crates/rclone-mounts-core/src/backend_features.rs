@@ -49,7 +49,10 @@ pub struct BackendFeatures {
 }
 
 const fn f(put_stream: bool, duplicate_files: bool) -> BackendFeatures {
-    BackendFeatures { put_stream, duplicate_files }
+    BackendFeatures {
+        put_stream,
+        duplicate_files,
+    }
 }
 
 /// (backend type string, features), matching rclone.conf's `type =` value.
@@ -116,7 +119,10 @@ const BACKEND_FEATURES: &[(&str, BackendFeatures)] = &[
 /// string. `None` for WebDAV (use [`webdav_put_stream`] instead) or any
 /// backend not yet in the table above.
 pub fn lookup(kind: &str) -> Option<BackendFeatures> {
-    BACKEND_FEATURES.iter().find(|(tag, _)| *tag == kind).map(|(_, features)| *features)
+    BACKEND_FEATURES
+        .iter()
+        .find(|(tag, _)| *tag == kind)
+        .map(|(_, features)| *features)
 }
 
 /// WebDAV only sets `PutStream` when talking to another rclone instance

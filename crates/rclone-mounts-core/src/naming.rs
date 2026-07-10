@@ -73,9 +73,18 @@ mod tests {
 
     #[test]
     fn derived_ids_are_valid_names() {
-        for input in ["Work Share", "😀", "  ", "ALLCAPS", "x".repeat(200).as_str()] {
+        for input in [
+            "Work Share",
+            "😀",
+            "  ",
+            "ALLCAPS",
+            "x".repeat(200).as_str(),
+        ] {
             let id = derive_id(input, "source", |_| false);
-            assert!(validate_name(&id).is_ok(), "invalid id {id:?} from {input:?}");
+            assert!(
+                validate_name(&id).is_ok(),
+                "invalid id {id:?} from {input:?}"
+            );
         }
     }
 

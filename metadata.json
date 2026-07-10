@@ -11,7 +11,7 @@
             }
         ],
         "License": "GPL-2.0-or-later",
-        "Version": "0.0.1",
+        "Version": "0.1.0",
         "EnabledByDefault": true
     },
     "X-KDE-System-Settings-Parent-Category": "network",

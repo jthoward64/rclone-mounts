@@ -59,9 +59,10 @@ fn run(scope: Scope, op: &str, name: &str, input: &[u8]) -> Result<Vec<u8>> {
         .map_err(|e| Error::Credentials(format!("spawn systemd-creds: {e}")))?;
 
     {
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            Error::Credentials("failed to open stdin to systemd-creds".into())
-        })?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::Credentials("failed to open stdin to systemd-creds".into()))?;
         stdin
             .write_all(input)
             .map_err(|e| Error::Credentials(format!("write to systemd-creds: {e}")))?;
@@ -109,7 +110,9 @@ mod tests {
         let encrypted = match encrypt(Scope::User, "test-cred", plaintext) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("skipping: user-scope encrypt failed (likely no XDG_RUNTIME_DIR/systemd): {e}");
+                eprintln!(
+                    "skipping: user-scope encrypt failed (likely no XDG_RUNTIME_DIR/systemd): {e}"
+                );
                 return;
             }
         };

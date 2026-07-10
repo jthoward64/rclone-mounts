@@ -19,8 +19,8 @@ use nom::{
     bytes::complete::{take_till, take_while1},
     character::complete::{char, line_ending, not_line_ending, space0},
     combinator::{eof, opt, recognize},
-    sequence::{delimited, tuple},
-    IResult,
+    sequence::delimited,
+    IResult, Parser,
 };
 
 use crate::Error;
@@ -33,8 +33,15 @@ pub struct Document {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Line {
-    Section { name: String, raw: String },
-    KeyValue { key: String, value: String, raw: String },
+    Section {
+        name: String,
+        raw: String,
+    },
+    KeyValue {
+        key: String,
+        value: String,
+        raw: String,
+    },
     Comment(String),
     Blank,
 }
@@ -44,8 +51,12 @@ impl Document {
         let mut lines = Vec::new();
         let mut remaining = input;
         while !remaining.is_empty() {
-            let (rest, line) = parse_line(remaining)
-                .map_err(|e| Error::ConfigParse(format!("near {:?}: {e}", &remaining[..40.min(remaining.len())])))?;
+            let (rest, line) = parse_line(remaining).map_err(|e| {
+                Error::ConfigParse(format!(
+                    "near {:?}: {e}",
+                    &remaining[..40.min(remaining.len())]
+                ))
+            })?;
             lines.push(line);
             remaining = rest;
         }
@@ -180,7 +191,10 @@ impl Document {
     /// Returns the half-open range of line indices *inside* the named section
     /// (i.e. excluding the `[section]` header itself).
     fn section_range(&self, section: &str) -> Option<(usize, usize)> {
-        let header_idx = self.lines.iter().position(|l| matches!(l, Line::Section { name, .. } if name == section))?;
+        let header_idx = self
+            .lines
+            .iter()
+            .position(|l| matches!(l, Line::Section { name, .. } if name == section))?;
         let start = header_idx + 1;
         let end = self.lines[start..]
             .iter()
@@ -197,11 +211,11 @@ impl Document {
 }
 
 fn parse_line(input: &str) -> IResult<&str, Line> {
-    alt((parse_blank, parse_comment, parse_section, parse_key_value))(input)
+    alt((parse_blank, parse_comment, parse_section, parse_key_value)).parse(input)
 }
 
 fn parse_blank(input: &str) -> IResult<&str, Line> {
-    let (rest, _) = recognize(tuple((space0, alt((line_ending, eof)))))(input)?;
+    let (rest, _) = recognize((space0, alt((line_ending, eof)))).parse(input)?;
     // Only treat as blank if the whole line was empty/whitespace; otherwise let other parsers run.
     let consumed_len = input.len() - rest.len();
     let consumed = &input[..consumed_len];
@@ -217,37 +231,46 @@ fn parse_blank(input: &str) -> IResult<&str, Line> {
 }
 
 fn parse_comment(input: &str) -> IResult<&str, Line> {
-    let (rest, raw) = recognize(tuple((
+    let (rest, raw) = recognize((
         space0,
         alt((char(';'), char('#'))),
         not_line_ending,
         opt(line_ending),
-    )))(input)?;
+    ))
+    .parse(input)?;
     Ok((rest, Line::Comment(raw.to_string())))
 }
 
 fn parse_section(input: &str) -> IResult<&str, Line> {
-    let (rest, raw) = recognize(tuple((
+    let (rest, raw) = recognize((
         space0,
         delimited(char('['), take_till(|c| c == ']' || c == '\n'), char(']')),
         not_line_ending,
         opt(line_ending),
-    )))(input)?;
+    ))
+    .parse(input)?;
     let name_start = raw.find('[').unwrap() + 1;
     let name_end = raw.find(']').unwrap();
     let name = raw[name_start..name_end].trim().to_string();
-    Ok((rest, Line::Section { name, raw: raw.to_string() }))
+    Ok((
+        rest,
+        Line::Section {
+            name,
+            raw: raw.to_string(),
+        },
+    ))
 }
 
 fn parse_key_value(input: &str) -> IResult<&str, Line> {
-    let (rest, raw) = recognize(tuple((
+    let (rest, raw) = recognize((
         space0,
         take_while1(is_key_char),
         space0,
         char('='),
         not_line_ending,
         opt(line_ending),
-    )))(input)?;
+    ))
+    .parse(input)?;
     let eq_idx = raw.find('=').unwrap();
     let key = raw[..eq_idx].trim().to_string();
     // Value runs from after = up to (but not including) any trailing newline.
@@ -312,7 +335,11 @@ url = https://dav.example.org
         let doc = Document::parse(SAMPLE).unwrap();
         assert_eq!(
             doc.section_entries("work"),
-            vec![("type", "smb"), ("host", "files.example.com"), ("user", "alice")]
+            vec![
+                ("type", "smb"),
+                ("host", "files.example.com"),
+                ("user", "alice")
+            ]
         );
         // A section with only a header yields nothing.
         assert!(doc.section_entries("empty").is_empty());
@@ -361,7 +388,9 @@ url = https://dav.example.org
     #[test]
     fn set_rejects_embedded_newline_in_value() {
         let mut doc = Document::parse(SAMPLE).unwrap();
-        let err = doc.set("work", "host", "evil\n[backup]\ntype = drive").unwrap_err();
+        let err = doc
+            .set("work", "host", "evil\n[backup]\ntype = drive")
+            .unwrap_err();
         assert!(matches!(err, Error::ConfigParse(_)));
         // Nothing was written: the document is untouched.
         assert_eq!(doc.get("work", "host"), Some("files.example.com"));

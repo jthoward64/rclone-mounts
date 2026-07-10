@@ -69,21 +69,57 @@ pub struct KindSchema {
 }
 
 const fn text(key: &'static str, label: &'static str, placeholder: &'static str) -> FieldSchema {
-    FieldSchema { key, label, placeholder, field_type: FieldType::Text, options: &[], required: false }
+    FieldSchema {
+        key,
+        label,
+        placeholder,
+        field_type: FieldType::Text,
+        options: &[],
+        required: false,
+    }
 }
 
 /// Like `text`, but rclone can't actually connect without it — the KCM
 /// marks it and blocks OK/Continue until it's filled in.
-const fn required_text(key: &'static str, label: &'static str, placeholder: &'static str) -> FieldSchema {
-    FieldSchema { key, label, placeholder, field_type: FieldType::Text, options: &[], required: true }
+const fn required_text(
+    key: &'static str,
+    label: &'static str,
+    placeholder: &'static str,
+) -> FieldSchema {
+    FieldSchema {
+        key,
+        label,
+        placeholder,
+        field_type: FieldType::Text,
+        options: &[],
+        required: true,
+    }
 }
 
 const fn boolean(key: &'static str, label: &'static str) -> FieldSchema {
-    FieldSchema { key, label, placeholder: "", field_type: FieldType::Bool, options: &[], required: false }
+    FieldSchema {
+        key,
+        label,
+        placeholder: "",
+        field_type: FieldType::Bool,
+        options: &[],
+        required: false,
+    }
 }
 
-const fn select(key: &'static str, label: &'static str, options: &'static [FieldOption]) -> FieldSchema {
-    FieldSchema { key, label, placeholder: "", field_type: FieldType::Select, options, required: false }
+const fn select(
+    key: &'static str,
+    label: &'static str,
+    options: &'static [FieldOption],
+) -> FieldSchema {
+    FieldSchema {
+        key,
+        label,
+        placeholder: "",
+        field_type: FieldType::Select,
+        options,
+        required: false,
+    }
 }
 
 const SMB_FIELDS: &[FieldSchema] = &[
@@ -94,20 +130,54 @@ const SMB_FIELDS: &[FieldSchema] = &[
 ];
 
 const WEBDAV_VENDOR_OPTIONS: &[FieldOption] = &[
-    FieldOption { value: "", label: "Not set" },
-    FieldOption { value: "fastmail", label: "Fastmail Files" },
-    FieldOption { value: "nextcloud", label: "Nextcloud" },
-    FieldOption { value: "owncloud", label: "ownCloud" },
-    FieldOption { value: "infinitescale", label: "Infinitescale" },
-    FieldOption { value: "opencloud", label: "OpenCloud" },
-    FieldOption { value: "sharepoint", label: "Sharepoint" },
-    FieldOption { value: "sharepoint-ntlm", label: "Sharepoint (NTLM)" },
-    FieldOption { value: "rclone", label: "rclone" },
-    FieldOption { value: "other", label: "Other" },
+    FieldOption {
+        value: "",
+        label: "Not set",
+    },
+    FieldOption {
+        value: "fastmail",
+        label: "Fastmail Files",
+    },
+    FieldOption {
+        value: "nextcloud",
+        label: "Nextcloud",
+    },
+    FieldOption {
+        value: "owncloud",
+        label: "ownCloud",
+    },
+    FieldOption {
+        value: "infinitescale",
+        label: "Infinitescale",
+    },
+    FieldOption {
+        value: "opencloud",
+        label: "OpenCloud",
+    },
+    FieldOption {
+        value: "sharepoint",
+        label: "Sharepoint",
+    },
+    FieldOption {
+        value: "sharepoint-ntlm",
+        label: "Sharepoint (NTLM)",
+    },
+    FieldOption {
+        value: "rclone",
+        label: "rclone",
+    },
+    FieldOption {
+        value: "other",
+        label: "Other",
+    },
 ];
 
 const WEBDAV_FIELDS: &[FieldSchema] = &[
-    required_text("url", "URL:", "https://dav.example.com/remote.php/dav/files/alice"),
+    required_text(
+        "url",
+        "URL:",
+        "https://dav.example.com/remote.php/dav/files/alice",
+    ),
     select("vendor", "Vendor:", WEBDAV_VENDOR_OPTIONS),
     text("user", "User:", "alice"),
 ];
@@ -128,9 +198,21 @@ const FTP_FIELDS: &[FieldSchema] = &[
 ];
 
 const DRIVE_FIELDS: &[FieldSchema] = &[
-    text("client_id", "Client ID (optional):", "leave blank to use the default"),
-    text("client_secret", "Client secret (optional):", "leave blank to use the default"),
-    text("root_folder_id", "Root folder ID (optional):", "leave blank for the whole drive"),
+    text(
+        "client_id",
+        "Client ID (optional):",
+        "leave blank to use the default",
+    ),
+    text(
+        "client_secret",
+        "Client secret (optional):",
+        "leave blank to use the default",
+    ),
+    text(
+        "root_folder_id",
+        "Root folder ID (optional):",
+        "leave blank for the whole drive",
+    ),
 ];
 
 const KIND_SCHEMAS: &[KindSchema] = &[
@@ -218,34 +300,51 @@ pub fn validate_options_against_schema(
     options: &std::collections::BTreeMap<String, String>,
 ) -> Result<(), String> {
     let Some(schema) = schema_for(kind_tag) else {
-        return Err(format!("\u{201c}{kind_tag}\u{201d} isn\u{2019}t a source type this version supports."));
+        return Err(format!(
+            "\u{201c}{kind_tag}\u{201d} isn\u{2019}t a source type this version supports."
+        ));
     };
     if schema.wizard_only {
         return Ok(());
     }
     for key in options.keys() {
         if !schema.fields.iter().any(|f| f.key == key) {
-            return Err(format!("\u{201c}{key}\u{201d} isn\u{2019}t a valid field for {}.", schema.label));
+            return Err(format!(
+                "\u{201c}{key}\u{201d} isn\u{2019}t a valid field for {}.",
+                schema.label
+            ));
         }
     }
     for field in schema.fields {
         if field.field_type == FieldType::Bool {
             if let Some(v) = options.get(field.key) {
                 if v != "true" && v != "false" {
-                    return Err(format!("\u{201c}{}\u{201d} must be true or false.", field.label));
+                    return Err(format!(
+                        "\u{201c}{}\u{201d} must be true or false.",
+                        field.label
+                    ));
                 }
             }
         }
         if field.field_type == FieldType::Select {
             if let Some(v) = options.get(field.key) {
                 if !field.options.iter().any(|o| o.value == v.as_str()) {
-                    return Err(format!("\u{201c}{}\u{201d} isn\u{2019}t a valid choice for {}.", v, field.label));
+                    return Err(format!(
+                        "\u{201c}{}\u{201d} isn\u{2019}t a valid choice for {}.",
+                        v, field.label
+                    ));
                 }
             }
         }
     }
-    if kind_tag == "ftp" && options.get("tls").map(String::as_str) == Some("true") && options.get("explicit_tls").map(String::as_str) == Some("true") {
-        return Err("Implicit and explicit FTPS can\u{2019}t both be enabled \u{2014} pick one.".to_string());
+    if kind_tag == "ftp"
+        && options.get("tls").map(String::as_str) == Some("true")
+        && options.get("explicit_tls").map(String::as_str) == Some("true")
+    {
+        return Err(
+            "Implicit and explicit FTPS can\u{2019}t both be enabled \u{2014} pick one."
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -260,7 +359,11 @@ mod tests {
         let json = serde_json::to_string(all_kind_schemas()).unwrap();
         assert!(json.len() > 10);
         for kind in all_kind_schemas() {
-            assert!(json.contains(kind.tag), "missing {} in serialized schema", kind.tag);
+            assert!(
+                json.contains(kind.tag),
+                "missing {} in serialized schema",
+                kind.tag
+            );
         }
     }
 
@@ -276,10 +379,22 @@ mod tests {
             if kind.tag == "webdav" {
                 continue;
             }
-            let expected = crate::backend_features::lookup(kind.tag)
-                .unwrap_or_else(|| panic!("{} is missing from backend_features::BACKEND_FEATURES", kind.tag));
-            assert_eq!(kind.put_stream, expected.put_stream, "put_stream mismatch for {}", kind.tag);
-            assert_eq!(kind.duplicate_files, expected.duplicate_files, "duplicate_files mismatch for {}", kind.tag);
+            let expected = crate::backend_features::lookup(kind.tag).unwrap_or_else(|| {
+                panic!(
+                    "{} is missing from backend_features::BACKEND_FEATURES",
+                    kind.tag
+                )
+            });
+            assert_eq!(
+                kind.put_stream, expected.put_stream,
+                "put_stream mismatch for {}",
+                kind.tag
+            );
+            assert_eq!(
+                kind.duplicate_files, expected.duplicate_files,
+                "duplicate_files mismatch for {}",
+                kind.tag
+            );
         }
     }
 

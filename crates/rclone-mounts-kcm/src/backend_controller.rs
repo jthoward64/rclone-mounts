@@ -229,8 +229,7 @@ use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use rclone_mounts_core::{
     Backend, Changeset, HelperBackend, LocalBackend, Mount, MountOptions, SecretValue, SourceDef,
-    SourceKind,
-    SourceMetadata, State,
+    SourceKind, SourceMetadata, State,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -310,8 +309,9 @@ fn credential_kinds() -> Vec<CredentialKindInfo> {
 
 impl Default for BackendControllerRust {
     fn default() -> Self {
-        let kind_schemas_json = serde_json::to_string(rclone_mounts_core::source_schema::all_kind_schemas())
-            .unwrap_or_else(|_| "[]".to_string());
+        let kind_schemas_json =
+            serde_json::to_string(rclone_mounts_core::source_schema::all_kind_schemas())
+                .unwrap_or_else(|_| "[]".to_string());
         let credential_kinds_json =
             serde_json::to_string(&credential_kinds()).unwrap_or_else(|_| "[]".to_string());
         Self {
@@ -429,8 +429,13 @@ async fn read_statuses(backend: &dyn Backend, names: &[String]) -> BTreeMap<Stri
 
 /// What a wizard step resolved to, handed back to the GUI thread to apply.
 enum WizardResult {
-    Done { source_def: SourceDef },
-    NeedInput { session: WizardSession, prompt_json: String },
+    Done {
+        source_def: SourceDef,
+    },
+    NeedInput {
+        session: WizardSession,
+        prompt_json: String,
+    },
     Failed(String),
 }
 
@@ -476,7 +481,13 @@ fn source_def_from_remote_conf(
         if secret_keys.contains(&k) {
             // Already in final on-disk form (rclone wrote it): obscure:false
             // means it's stored byte-for-byte, not re-obscured.
-            new_secrets.insert(k.to_string(), SecretValue { value: v.to_string(), obscure: false });
+            new_secrets.insert(
+                k.to_string(),
+                SecretValue {
+                    value: v.to_string(),
+                    obscure: false,
+                },
+            );
         } else {
             options.insert(k.to_string(), v.to_string());
         }
@@ -517,7 +528,9 @@ fn finish_step(
         DriverStep::Done { remote_conf } => {
             match source_def_from_remote_conf(&remote_conf, kind, &remote_name, &display_name) {
                 Ok(source_def) => WizardResult::Done { source_def },
-                Err(e) => WizardResult::Failed(format!("Sign-in finished but the result couldn’t be read. {e}")),
+                Err(e) => WizardResult::Failed(format!(
+                    "Sign-in finished but the result couldn’t be read. {e}"
+                )),
             }
         }
         DriverStep::NeedInput { state, prompt } => {
@@ -534,7 +547,13 @@ fn finish_step(
             })
             .to_string();
             WizardResult::NeedInput {
-                session: WizardSession { driver, kind, remote_name, display_name, pending_state: state },
+                session: WizardSession {
+                    driver,
+                    kind,
+                    remote_name,
+                    display_name,
+                    pending_state: state,
+                },
                 prompt_json,
             }
         }
@@ -577,16 +596,23 @@ async fn start_wizard(
                 initial_kv.remove("client_id");
                 initial_kv.remove("client_secret");
             }
-            Err(e) => return WizardResult::Failed(format!("Couldn’t resolve Google Drive credentials. {e}")),
+            Err(e) => {
+                return WizardResult::Failed(format!(
+                    "Couldn’t resolve Google Drive credentials. {e}"
+                ))
+            }
         }
         initial_kv.insert("scope".to_string(), "drive".to_string());
     }
 
-    let (mut driver, step) =
-        match rclone_mounts_core::rclone_config_driver::ConfigDriver::start(kind.as_tag(), &remote_name, &initial_kv) {
-            Ok(v) => v,
-            Err(e) => return WizardResult::Failed(format!("Couldn’t start sign-in. {e}")),
-        };
+    let (mut driver, step) = match rclone_mounts_core::rclone_config_driver::ConfigDriver::start(
+        kind.as_tag(),
+        &remote_name,
+        &initial_kv,
+    ) {
+        Ok(v) => v,
+        Err(e) => return WizardResult::Failed(format!("Couldn’t start sign-in. {e}")),
+    };
     let step = drain_auto_answerable(&mut driver, step);
     finish_step(driver, step, kind, remote_name, display_name)
 }
@@ -611,9 +637,13 @@ impl ffi::BackendController {
                 self.as_mut().set_wizard_state(QString::from("done"));
                 self.as_mut().refresh();
             }
-            WizardResult::NeedInput { session, prompt_json } => {
+            WizardResult::NeedInput {
+                session,
+                prompt_json,
+            } => {
                 self.as_mut().rust_mut().wizard = Some(session);
-                self.as_mut().set_wizard_prompt_json(QString::from(prompt_json.as_str()));
+                self.as_mut()
+                    .set_wizard_prompt_json(QString::from(prompt_json.as_str()));
                 self.as_mut().set_wizard_error(QString::default());
                 self.as_mut().set_wizard_state(QString::from("need_input"));
             }
@@ -635,16 +665,18 @@ impl ffi::BackendController {
     ) {
         let kind_tag = kind.to_string();
         let Some(kind) = SourceKind::from_tag(&kind_tag) else {
-            self.as_mut()
-                .set_wizard_error(QString::from(format!("“{kind_tag}” isn’t a source type this version supports.").as_str()));
+            self.as_mut().set_wizard_error(QString::from(
+                format!("“{kind_tag}” isn’t a source type this version supports.").as_str(),
+            ));
             self.as_mut().set_wizard_state(QString::from("error"));
             return;
         };
         let seed: BTreeMap<String, String> = match serde_json::from_str(&seed_json.to_string()) {
             Ok(v) => v,
             Err(e) => {
-                self.as_mut()
-                    .set_wizard_error(QString::from(format!("Those settings couldn’t be read. {e}").as_str()));
+                self.as_mut().set_wizard_error(QString::from(
+                    format!("Those settings couldn’t be read. {e}").as_str(),
+                ));
                 self.as_mut().set_wizard_state(QString::from("error"));
                 return;
             }
@@ -659,7 +691,13 @@ impl ffi::BackendController {
 
         let thread = self.as_ref().qt_thread();
         std::thread::spawn(move || {
-            let outcome = async_io::block_on(start_wizard(kind, remote_name, display, seed, backend.as_deref()));
+            let outcome = async_io::block_on(start_wizard(
+                kind,
+                remote_name,
+                display,
+                seed,
+                backend.as_deref(),
+            ));
             let _ = thread.queue(move |mut obj| {
                 obj.as_mut().apply_wizard_result(outcome);
             });
@@ -677,10 +715,18 @@ impl ffi::BackendController {
         self.as_mut().set_wizard_state(QString::from("running"));
         let thread = self.as_ref().qt_thread();
         std::thread::spawn(move || {
-            let WizardSession { mut driver, kind, remote_name, display_name, pending_state } = session;
+            let WizardSession {
+                mut driver,
+                kind,
+                remote_name,
+                display_name,
+                pending_state,
+            } = session;
             let step = driver
                 .continue_with(&pending_state, &answer)
-                .unwrap_or_else(|e| rclone_mounts_core::rclone_config_driver::DriverStep::Error(e.to_string()));
+                .unwrap_or_else(|e| {
+                    rclone_mounts_core::rclone_config_driver::DriverStep::Error(e.to_string())
+                });
             let step = drain_auto_answerable(&mut driver, step);
             let outcome = finish_step(driver, step, kind, remote_name, display_name);
             let _ = thread.queue(move |mut obj| {
@@ -698,11 +744,17 @@ impl ffi::BackendController {
         self.as_mut().set_wizard_state(QString::from("idle"));
     }
 
-    fn set_provider_override(mut self: Pin<&mut Self>, kind: &QString, client_id: &QString, client_secret: &QString) {
+    fn set_provider_override(
+        mut self: Pin<&mut Self>,
+        kind: &QString,
+        client_id: &QString,
+        client_secret: &QString,
+    ) {
         let kind_tag = kind.to_string();
         let Some(kind) = SourceKind::from_tag(&kind_tag) else {
-            self.as_mut()
-                .set_error_string(QString::from(format!("“{kind_tag}” isn’t a source type this version supports.").as_str()));
+            self.as_mut().set_error_string(QString::from(
+                format!("“{kind_tag}” isn’t a source type this version supports.").as_str(),
+            ));
             return;
         };
         let Some(backend) = self.as_ref().rust().backend.clone() else {
@@ -716,7 +768,8 @@ impl ffi::BackendController {
         self.as_mut().set_busy(true);
         let thread = self.as_ref().qt_thread();
         std::thread::spawn(move || {
-            let result = async_io::block_on(backend.set_provider_override(kind, &client_id, &client_secret));
+            let result =
+                async_io::block_on(backend.set_provider_override(kind, &client_id, &client_secret));
             let _ = thread.queue(move |mut obj| {
                 match result {
                     Ok(()) => obj.as_mut().set_error_string(QString::default()),
@@ -736,7 +789,10 @@ impl ffi::BackendController {
         let Some(backend) = self.as_ref().rust().backend.clone() else {
             return false;
         };
-        async_io::block_on(backend.provider_override(k)).ok().flatten().is_some()
+        async_io::block_on(backend.provider_override(k))
+            .ok()
+            .flatten()
+            .is_some()
     }
 
     fn provider_default_available(self: Pin<&mut Self>, kind: &QString) -> bool {
@@ -750,11 +806,13 @@ impl ffi::BackendController {
             return false;
         };
         match k {
-            SourceKind::Drive => async_io::block_on(rclone_mounts_core::oauth_credentials::resolve_drive_client_credentials(
-                backend.as_ref(),
-                None,
-                None,
-            ))
+            SourceKind::Drive => async_io::block_on(
+                rclone_mounts_core::oauth_credentials::resolve_drive_client_credentials(
+                    backend.as_ref(),
+                    None,
+                    None,
+                ),
+            )
             .ok()
             .flatten()
             .is_some(),
@@ -780,20 +838,24 @@ impl ffi::BackendController {
             // Cheap, side-effect-free bus query (no Polkit prompt, no error
             // banner) so the UI can decide whether "System mounts" is worth
             // offering at all. Runs alongside the real load, not gating it.
-            let system_available = async_io::block_on(rclone_mounts_core::backend::system_scope_available());
+            let system_available =
+                async_io::block_on(rclone_mounts_core::backend::system_scope_available());
 
-            let outcome: rclone_mounts_core::Result<(Arc<dyn Backend>, State, BTreeMap<String, String>)> =
-                async_io::block_on(async {
-                    let backend: Arc<dyn Backend> = if system {
-                        Arc::new(HelperBackend::new().await?)
-                    } else {
-                        Arc::new(LocalBackend::new_user().await?)
-                    };
-                    let state = backend.load().await?;
-                    let names: Vec<String> = state.mounts.iter().map(|m| m.name.clone()).collect();
-                    let statuses = read_statuses(backend.as_ref(), &names).await;
-                    Ok((backend, state, statuses))
-                });
+            let outcome: rclone_mounts_core::Result<(
+                Arc<dyn Backend>,
+                State,
+                BTreeMap<String, String>,
+            )> = async_io::block_on(async {
+                let backend: Arc<dyn Backend> = if system {
+                    Arc::new(HelperBackend::new().await?)
+                } else {
+                    Arc::new(LocalBackend::new_user().await?)
+                };
+                let state = backend.load().await?;
+                let names: Vec<String> = state.mounts.iter().map(|m| m.name.clone()).collect();
+                let statuses = read_statuses(backend.as_ref(), &names).await;
+                Ok((backend, state, statuses))
+            });
 
             let _ = thread.queue(move |mut obj| {
                 obj.as_mut().set_system_scope_available(system_available);
@@ -841,8 +903,9 @@ impl ffi::BackendController {
             return;
         }
         if self.as_ref().rust().backend.is_none() {
-            self.as_mut()
-                .set_error_string(QString::from("The rclone settings module isn’t ready yet. Try closing and reopening it."));
+            self.as_mut().set_error_string(QString::from(
+                "The rclone settings module isn’t ready yet. Try closing and reopening it.",
+            ));
             return;
         }
 
@@ -860,8 +923,7 @@ impl ffi::BackendController {
                 async_io::block_on(async {
                     backend.apply(pending).await?;
                     let state = backend.load().await?;
-                    let names: Vec<String> =
-                        state.mounts.iter().map(|m| m.name.clone()).collect();
+                    let names: Vec<String> = state.mounts.iter().map(|m| m.name.clone()).collect();
                     let statuses = read_statuses(backend.as_ref(), &names).await;
                     Ok((state, statuses))
                 });
@@ -949,7 +1011,13 @@ impl ffi::BackendController {
 
     fn remove_mount(mut self: Pin<&mut Self>, name: &QString) {
         let name = name.to_string();
-        let in_applied = self.as_ref().rust().applied.mounts.iter().any(|m| m.name == name);
+        let in_applied = self
+            .as_ref()
+            .rust()
+            .applied
+            .mounts
+            .iter()
+            .any(|m| m.name == name);
         {
             let mut rust = self.as_mut().rust_mut();
             let p = &mut rust.pending;
@@ -973,19 +1041,24 @@ impl ffi::BackendController {
     ) -> QString {
         let kind_tag = kind.to_string();
         let Some(kind) = SourceKind::from_tag(&kind_tag) else {
-            self.as_mut()
-                .set_error_string(QString::from(format!("“{kind_tag}” isn’t a source type this version supports.").as_str()));
+            self.as_mut().set_error_string(QString::from(
+                format!("“{kind_tag}” isn’t a source type this version supports.").as_str(),
+            ));
             return QString::default();
         };
-        let options: BTreeMap<String, String> = match serde_json::from_str(&options_json.to_string()) {
-            Ok(o) => o,
-            Err(e) => {
-                self.as_mut()
-                    .set_error_string(QString::from(format!("Those source settings couldn’t be read. {e}").as_str()));
-                return QString::default();
-            }
-        };
-        if let Err(e) = rclone_mounts_core::source_schema::validate_options_against_schema(&kind_tag, &options) {
+        let options: BTreeMap<String, String> =
+            match serde_json::from_str(&options_json.to_string()) {
+                Ok(o) => o,
+                Err(e) => {
+                    self.as_mut().set_error_string(QString::from(
+                        format!("Those source settings couldn’t be read. {e}").as_str(),
+                    ));
+                    return QString::default();
+                }
+            };
+        if let Err(e) =
+            rclone_mounts_core::source_schema::validate_options_against_schema(&kind_tag, &options)
+        {
             self.as_mut().set_error_string(QString::from(e.as_str()));
             return QString::default();
         }
@@ -994,7 +1067,13 @@ impl ffi::BackendController {
         let id = self.as_ref().resolve_id(&id.to_string(), &display, true);
         let mut new_secrets = BTreeMap::new();
         if !secret.is_empty() {
-            new_secrets.insert("pass".to_string(), SecretValue { value: secret, obscure: true });
+            new_secrets.insert(
+                "pass".to_string(),
+                SecretValue {
+                    value: secret,
+                    obscure: true,
+                },
+            );
         }
         let def = SourceDef {
             name: id.clone(),
@@ -1017,7 +1096,13 @@ impl ffi::BackendController {
 
     fn remove_source(mut self: Pin<&mut Self>, name: &QString) {
         let name = name.to_string();
-        let in_applied = self.as_ref().rust().applied.sources.iter().any(|s| s.name == name);
+        let in_applied = self
+            .as_ref()
+            .rust()
+            .applied
+            .sources
+            .iter()
+            .any(|s| s.name == name);
         {
             let mut rust = self.as_mut().rust_mut();
             let p = &mut rust.pending;
@@ -1080,8 +1165,9 @@ impl ffi::BackendController {
         let name = name.to_string();
         self.as_mut().set_error_string(QString::default());
         if self.as_ref().rust().backend.is_none() {
-            self.as_mut()
-                .set_error_string(QString::from("The rclone settings module isn’t ready yet. Try closing and reopening it."));
+            self.as_mut().set_error_string(QString::from(
+                "The rclone settings module isn’t ready yet. Try closing and reopening it.",
+            ));
             return;
         }
         let result = {
@@ -1098,8 +1184,9 @@ impl ffi::BackendController {
         if let Err(e) = result {
             let verb = if start { "start" } else { "stop" };
             tracing::error!(error = %e, mount = %name, "{verb} failed");
-            self.as_mut()
-                .set_error_string(QString::from(format!("Couldn’t {verb} “{name}”. {e}").as_str()));
+            self.as_mut().set_error_string(QString::from(
+                format!("Couldn’t {verb} “{name}”. {e}").as_str(),
+            ));
         }
         self.as_mut().fetch_statuses();
         self.as_mut().refresh();
@@ -1150,8 +1237,12 @@ impl ffi::BackendController {
             let this = self.as_ref();
             let rust = this.rust();
             let displayed = rust.applied.preview(&rust.pending);
-            let applied_names: std::collections::HashSet<&str> =
-                rust.applied.mounts.iter().map(|m| m.name.as_str()).collect();
+            let applied_names: std::collections::HashSet<&str> = rust
+                .applied
+                .mounts
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect();
             let mounts: Vec<MountView> = displayed
                 .mounts
                 .iter()
@@ -1185,8 +1276,10 @@ impl ffi::BackendController {
                 !changeset_is_empty(&rust.pending),
             )
         };
-        self.as_mut().set_mounts_json(QString::from(mounts_json.as_str()));
-        self.as_mut().set_sources_json(QString::from(sources_json.as_str()));
+        self.as_mut()
+            .set_mounts_json(QString::from(mounts_json.as_str()));
+        self.as_mut()
+            .set_sources_json(QString::from(sources_json.as_str()));
         self.as_mut().set_dirty(dirty);
     }
 }

@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Lint, build & package
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    outputs:
+      pkgver: ${{ steps.pkgver.outputs.pkgver }}
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git sudo \
+            cmake extra-cmake-modules corrosion \
+            qt6-base qt6-declarative \
+            kcoreaddons ki18n kcmutils \
+            rust
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Read pkgver from Cargo.toml
+        id: pkgver
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "pkgver=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build .pkg.tar.zst
+        run: |
+          cp .github/PKGBUILD.ci ./PKGBUILD.ci
+          useradd -m builder
+          chown -R builder:builder .
+          su builder -c "makepkg -p PKGBUILD.ci --noconfirm --clean"
+          rm -f PKGBUILD.ci
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rclone-mounts-pkg
+          path: '*.pkg.tar.zst'
+          if-no-files-found: error
+
+  release:
+    name: Tag & draft release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: rclone-mounts-pkg
+
+      - name: Tag and draft release if version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKGVER: ${{ needs.build.outputs.pkgver }}
+        run: |
+          tag="v${PKGVER}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists, skipping release."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$tag" "${{ github.sha }}"
+          git push origin "$tag"
+
+          gh release create "$tag" \
+            --draft \
+            --title "$tag" \
+            --generate-notes \
+            --target "${{ github.sha }}" \
+            ./*.pkg.tar.zst

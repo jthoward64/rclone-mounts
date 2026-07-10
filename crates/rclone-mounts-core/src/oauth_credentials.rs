@@ -83,21 +83,32 @@ mod tests {
 
     #[test]
     fn user_override_wins_over_everything() {
-        let backend = FakeBackend { override_pair: Mutex::new(Some(("admin-id".into(), "admin-secret".into()))) };
+        let backend = FakeBackend {
+            override_pair: Mutex::new(Some(("admin-id".into(), "admin-secret".into()))),
+        };
         let result = async_io::block_on(resolve_drive_client_credentials(
             &backend,
             Some("user-id"),
             Some("user-secret"),
         ))
         .unwrap();
-        assert_eq!(result, Some(("user-id".to_string(), "user-secret".to_string())));
+        assert_eq!(
+            result,
+            Some(("user-id".to_string(), "user-secret".to_string()))
+        );
     }
 
     #[test]
     fn admin_override_wins_when_no_user_override() {
-        let backend = FakeBackend { override_pair: Mutex::new(Some(("admin-id".into(), "admin-secret".into()))) };
-        let result = async_io::block_on(resolve_drive_client_credentials(&backend, None, None)).unwrap();
-        assert_eq!(result, Some(("admin-id".to_string(), "admin-secret".to_string())));
+        let backend = FakeBackend {
+            override_pair: Mutex::new(Some(("admin-id".into(), "admin-secret".into()))),
+        };
+        let result =
+            async_io::block_on(resolve_drive_client_credentials(&backend, None, None)).unwrap();
+        assert_eq!(
+            result,
+            Some(("admin-id".to_string(), "admin-secret".to_string()))
+        );
     }
 
     #[test]
@@ -106,17 +117,33 @@ mod tests {
         // (normally unset in CI/test), so we only assert the fallback chain
         // reaches "no admin override, no user override" — the build-time
         // tier itself is exercised implicitly (compiles to None here).
-        let backend = FakeBackend { override_pair: Mutex::new(None) };
-        let result = async_io::block_on(resolve_drive_client_credentials(&backend, None, None)).unwrap();
-        assert_eq!(result, build_time_drive_credentials().map(|(a, b)| (a.to_string(), b.to_string())));
+        let backend = FakeBackend {
+            override_pair: Mutex::new(None),
+        };
+        let result =
+            async_io::block_on(resolve_drive_client_credentials(&backend, None, None)).unwrap();
+        assert_eq!(
+            result,
+            build_time_drive_credentials().map(|(a, b)| (a.to_string(), b.to_string()))
+        );
     }
 
     #[test]
     fn partial_user_override_is_ignored() {
         // Only one of client_id/client_secret supplied — not a valid override,
         // falls through to the next tier.
-        let backend = FakeBackend { override_pair: Mutex::new(Some(("admin-id".into(), "admin-secret".into()))) };
-        let result = async_io::block_on(resolve_drive_client_credentials(&backend, Some("user-id"), None)).unwrap();
-        assert_eq!(result, Some(("admin-id".to_string(), "admin-secret".to_string())));
+        let backend = FakeBackend {
+            override_pair: Mutex::new(Some(("admin-id".into(), "admin-secret".into()))),
+        };
+        let result = async_io::block_on(resolve_drive_client_credentials(
+            &backend,
+            Some("user-id"),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            result,
+            Some(("admin-id".to_string(), "admin-secret".to_string()))
+        );
     }
 }

@@ -32,8 +32,7 @@ pub struct LocalUnitStore {
 
 impl LocalUnitStore {
     pub fn new_user_default() -> Result<Self> {
-        let home = std::env::var_os("HOME")
-            .ok_or_else(|| Error::Systemd("HOME not set".into()))?;
+        let home = std::env::var_os("HOME").ok_or_else(|| Error::Systemd("HOME not set".into()))?;
         let home = PathBuf::from(home);
         let cfg = home.join(".config/rclone-mounts");
         Ok(Self {
@@ -92,8 +91,7 @@ impl LocalUnitStore {
         temp.as_file().sync_all()?;
         let perms = fs::Permissions::from_mode(self.file_mode);
         fs::set_permissions(temp.path(), perms)?;
-        temp.persist(path)
-            .map_err(|e| Error::Io(e.error))?;
+        temp.persist(path).map_err(|e| Error::Io(e.error))?;
         Ok(())
     }
 }

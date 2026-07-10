@@ -50,7 +50,12 @@ pub trait Backend: Send + Sync {
     /// build-time < admin-override < per-source-user-override precedence.
     /// Only meaningful in system scope; a user-scope backend has no
     /// authority to set an org-wide default and rejects this.
-    async fn set_provider_override(&self, kind: SourceKind, client_id: &str, client_secret: &str) -> Result<()>;
+    async fn set_provider_override(
+        &self,
+        kind: SourceKind,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<()>;
     /// The stored admin override for `kind`, if any. `None` in user scope
     /// (there is no admin override to read there) or if nothing was set.
     /// Never surfaced to QML raw — only consumed by credential-precedence
@@ -176,7 +181,10 @@ impl Backend for LocalBackend {
                 // `new_secrets.is_empty()` semantic the dirty-preview fold
                 // uses, so the flag is stable across apply.
                 has_secret: !self
-                    .existing_secrets(name, SourceKind::from_tag(kind_tag).unwrap_or(SourceKind::Smb))?
+                    .existing_secrets(
+                        name,
+                        SourceKind::from_tag(kind_tag).unwrap_or(SourceKind::Smb),
+                    )?
                     .is_empty(),
             });
         }
@@ -217,7 +225,10 @@ impl Backend for LocalBackend {
             // partway through with those already persisted.
             unit_writer::reject_control_chars("The subpath", &mount.subpath)?;
             let mountpoint_str = mount.mountpoint.to_str().ok_or_else(|| {
-                Error::Systemd(format!("mountpoint is not valid UTF-8: {:?}", mount.mountpoint))
+                Error::Systemd(format!(
+                    "mountpoint is not valid UTF-8: {:?}",
+                    mount.mountpoint
+                ))
             })?;
             unit_writer::reject_control_chars("The mount point", mountpoint_str)?;
         }
@@ -234,8 +245,11 @@ impl Backend for LocalBackend {
         // stale alias must be dropped even though the source is otherwise
         // untouched). Computed against `current` (pre-fold) for the delete
         // case since `fold` consumes it below.
-        let mut sources_needing_credential_rewrite: std::collections::HashSet<String> =
-            changeset.upsert_sources.iter().map(|s| s.name.clone()).collect();
+        let mut sources_needing_credential_rewrite: std::collections::HashSet<String> = changeset
+            .upsert_sources
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
         for m in &current.mounts {
             if changeset.delete_mounts.contains(&m.name) && !m.subpath.is_empty() {
                 sources_needing_credential_rewrite.insert(m.source.clone());
@@ -291,7 +305,11 @@ impl Backend for LocalBackend {
                 continue;
             }
             let kind = SourceKind::from_tag(&meta.kind).unwrap_or(SourceKind::Smb);
-            let secrets = if let Some(src) = changeset.upsert_sources.iter().find(|s| s.name == meta.name) {
+            let secrets = if let Some(src) = changeset
+                .upsert_sources
+                .iter()
+                .find(|s| s.name == meta.name)
+            {
                 let mut secrets = self.existing_secrets(&src.name, src.kind)?;
                 for (key, secret) in &src.new_secrets {
                     let value = if secret.obscure {
@@ -321,7 +339,9 @@ impl Backend for LocalBackend {
         }
 
         // 5. Persist mount state file (canonical form for KCM round-trip).
-        let mounts_file = MountsFile { mount: target.mounts.clone() };
+        let mounts_file = MountsFile {
+            mount: target.mounts.clone(),
+        };
         let toml_text = toml::to_string_pretty(&mounts_file)
             .map_err(|e| Error::Systemd(format!("serialize mounts.toml: {e}")))?;
         self.store.write_mounts_state(&toml_text)?;
@@ -378,7 +398,12 @@ impl Backend for LocalBackend {
         self.control.active_state(&mount_unit_name(name)).await
     }
 
-    async fn set_provider_override(&self, kind: SourceKind, client_id: &str, client_secret: &str) -> Result<()> {
+    async fn set_provider_override(
+        &self,
+        kind: SourceKind,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<()> {
         if !matches!(self.scope, Scope::System) {
             return Err(Error::Systemd(
                 "Provider credential overrides are system-scope only.".into(),
@@ -466,7 +491,10 @@ pub async fn system_scope_available() -> bool {
     let Ok(proxy) = zbus::fdo::DBusProxy::new(&conn).await else {
         return false;
     };
-    if matches!(proxy.name_has_owner(HELPER_BUS.try_into().unwrap()).await, Ok(true)) {
+    if matches!(
+        proxy.name_has_owner(HELPER_BUS.try_into().unwrap()).await,
+        Ok(true)
+    ) {
         return true;
     }
     match proxy.list_activatable_names().await {
@@ -490,27 +518,33 @@ impl Backend for HelperBackend {
         Ok(State {
             sources: sources
                 .into_iter()
-                .map(|(name, display_name, kind, options, has_secret)| SourceMetadata {
-                    name,
-                    display_name,
-                    kind,
-                    options,
-                    has_secret,
-                })
+                .map(
+                    |(name, display_name, kind, options, has_secret)| SourceMetadata {
+                        name,
+                        display_name,
+                        kind,
+                        options,
+                        has_secret,
+                    },
+                )
                 .collect(),
             mounts: mounts
                 .into_iter()
-                .map(|(name, display_name, source, subpath, mountpoint, options_json, enabled)| Mount {
-                    name,
-                    display_name,
-                    source,
-                    subpath,
-                    mountpoint: mountpoint.into(),
-                    // Tolerate a malformed/empty blob by falling back to
-                    // defaults rather than failing the whole load.
-                    options: serde_json::from_str(&options_json).unwrap_or_default(),
-                    enabled,
-                })
+                .map(
+                    |(name, display_name, source, subpath, mountpoint, options_json, enabled)| {
+                        Mount {
+                            name,
+                            display_name,
+                            source,
+                            subpath,
+                            mountpoint: mountpoint.into(),
+                            // Tolerate a malformed/empty blob by falling back to
+                            // defaults rather than failing the whole load.
+                            options: serde_json::from_str(&options_json).unwrap_or_default(),
+                            enabled,
+                        }
+                    },
+                )
                 .collect(),
         })
     }
@@ -543,10 +577,18 @@ impl Backend for HelperBackend {
         Ok(proxy.call("MountStatus", &(name,)).await?)
     }
 
-    async fn set_provider_override(&self, kind: SourceKind, client_id: &str, client_secret: &str) -> Result<()> {
+    async fn set_provider_override(
+        &self,
+        kind: SourceKind,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<()> {
         let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
         let _: () = proxy
-            .call("SetProviderOverride", &(kind.as_tag(), client_id, client_secret))
+            .call(
+                "SetProviderOverride",
+                &(kind.as_tag(), client_id, client_secret),
+            )
             .await?;
         Ok(())
     }
@@ -693,7 +735,9 @@ fn credential_document(
 fn extract_secrets(blob: &str, keys: &[&str]) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for line in blob.lines() {
-        let Some(eq_idx) = line.find('=') else { continue };
+        let Some(eq_idx) = line.find('=') else {
+            continue;
+        };
         let key = line[..eq_idx].trim();
         if keys.contains(&key) {
             out.insert(key.to_string(), line[eq_idx + 1..].trim().to_string());
@@ -815,7 +859,10 @@ mod tests {
         if with_secret {
             new_secrets.insert(
                 "pass".into(),
-                crate::source::SecretValue { value: "hunter2".into(), obscure: true },
+                crate::source::SecretValue {
+                    value: "hunter2".into(),
+                    obscure: true,
+                },
             );
         }
         SourceDef {
@@ -835,10 +882,19 @@ mod tests {
         if with_secret {
             new_secrets.insert(
                 "pass".into(),
-                crate::source::SecretValue { value: "hunter2".into(), obscure: true },
+                crate::source::SecretValue {
+                    value: "hunter2".into(),
+                    obscure: true,
+                },
             );
         }
-        SourceDef { name: name.into(), display_name: name.into(), kind: SourceKind::Sftp, options, new_secrets }
+        SourceDef {
+            name: name.into(),
+            display_name: name.into(),
+            kind: SourceKind::Sftp,
+            options,
+            new_secrets,
+        }
     }
 
     fn ftp_source(name: &str, with_secret: bool) -> SourceDef {
@@ -848,10 +904,19 @@ mod tests {
         if with_secret {
             new_secrets.insert(
                 "pass".into(),
-                crate::source::SecretValue { value: "hunter2".into(), obscure: true },
+                crate::source::SecretValue {
+                    value: "hunter2".into(),
+                    obscure: true,
+                },
             );
         }
-        SourceDef { name: name.into(), display_name: name.into(), kind: SourceKind::Ftp, options, new_secrets }
+        SourceDef {
+            name: name.into(),
+            display_name: name.into(),
+            kind: SourceKind::Ftp,
+            options,
+            new_secrets,
+        }
     }
 
     #[test]
@@ -864,7 +929,10 @@ mod tests {
         .unwrap();
         let state = async_io::block_on(b.load()).unwrap();
         assert_eq!(state.sources[0].kind, "sftp");
-        assert_eq!(state.sources[0].options.get("host").map(String::as_str), Some("sftp.example.com"));
+        assert_eq!(
+            state.sources[0].options.get("host").map(String::as_str),
+            Some("sftp.example.com")
+        );
         assert!(state.sources[0].has_secret);
     }
 
@@ -915,9 +983,15 @@ mod tests {
         let src = &state.sources[0];
         assert_eq!(src.name, "work");
         assert_eq!(src.kind, "smb");
-        assert_eq!(src.options.get("host").map(String::as_str), Some("files.example.com"));
+        assert_eq!(
+            src.options.get("host").map(String::as_str),
+            Some("files.example.com")
+        );
         assert_eq!(src.options.get("user").map(String::as_str), Some("alice"));
-        assert!(src.has_secret, "source created with a password should load as has_secret");
+        assert!(
+            src.has_secret,
+            "source created with a password should load as has_secret"
+        );
     }
 
     #[test]
@@ -970,7 +1044,11 @@ mod tests {
         assert_eq!(s.name, "work");
         assert_eq!(s.display_name, "😀 Work Share");
         // The display name is our metadata, not an rclone connection option.
-        assert!(!s.options.contains_key("display_name"), "leaked: {:?}", s.options);
+        assert!(
+            !s.options.contains_key("display_name"),
+            "leaked: {:?}",
+            s.options
+        );
     }
 
     #[test]
@@ -996,7 +1074,9 @@ mod tests {
         let unit_path = dir.path().join("units/rclone-mount-work.service");
         let unit = std::fs::read_to_string(&unit_path).unwrap();
         assert!(unit.contains("Description=rclone mount: work"));
-        assert!(unit.contains("LoadCredentialEncrypted=rclone-conf:%h/.config/rclone-mounts/credentials/work"));
+        assert!(unit.contains(
+            "LoadCredentialEncrypted=rclone-conf:%h/.config/rclone-mounts/credentials/work"
+        ));
     }
 
     #[test]
@@ -1011,20 +1091,35 @@ mod tests {
         }))
         .unwrap();
 
-        let unit = std::fs::read_to_string(dir.path().join("units/rclone-mount-docs.service")).unwrap();
+        let unit =
+            std::fs::read_to_string(dir.path().join("units/rclone-mount-docs.service")).unwrap();
         // The subpath text itself never appears in the unit file...
-        assert!(!unit.contains("My Documents"), "subpath leaked into unit: {unit}");
+        assert!(
+            !unit.contains("My Documents"),
+            "subpath leaked into unit: {unit}"
+        );
         // ...ExecStart references the alias remote instead, still keyed off
         // the source's own credential blob (no new file/directory).
-        assert!(unit.contains("MOUNT_docs:"), "missing alias reference: {unit}");
-        assert!(unit.contains("LoadCredentialEncrypted=rclone-conf:%h/.config/rclone-mounts/credentials/work"));
+        assert!(
+            unit.contains("MOUNT_docs:"),
+            "missing alias reference: {unit}"
+        );
+        assert!(unit.contains(
+            "LoadCredentialEncrypted=rclone-conf:%h/.config/rclone-mounts/credentials/work"
+        ));
 
         // ...and the subpath lives in the source's encrypted config blob as
         // an `alias` remote pointing at `source:subpath`.
         let blob = decrypt_blob(&b, "work");
-        assert!(blob.contains("[MOUNT_docs]"), "missing alias section: {blob}");
+        assert!(
+            blob.contains("[MOUNT_docs]"),
+            "missing alias section: {blob}"
+        );
         assert!(blob.contains("type = alias"), "missing alias type: {blob}");
-        assert!(blob.contains("remote = work:My Documents"), "missing alias remote: {blob}");
+        assert!(
+            blob.contains("remote = work:My Documents"),
+            "missing alias remote: {blob}"
+        );
     }
 
     #[test]
@@ -1037,7 +1132,10 @@ mod tests {
         }))
         .unwrap();
         let blob = decrypt_blob(&b, "work");
-        assert!(!blob.contains("alias"), "no alias needed for a whole-remote mount: {blob}");
+        assert!(
+            !blob.contains("alias"),
+            "no alias needed for a whole-remote mount: {blob}"
+        );
     }
 
     #[test]
@@ -1079,7 +1177,10 @@ mod tests {
         }))
         .unwrap();
         let blob = decrypt_blob(&b, "work");
-        assert!(!blob.contains("MOUNT_docs"), "stale alias survived deletion: {blob}");
+        assert!(
+            !blob.contains("MOUNT_docs"),
+            "stale alias survived deletion: {blob}"
+        );
     }
 
     #[test]
@@ -1130,14 +1231,23 @@ mod tests {
         assert!(!found.contains_key("token"), "token wasn't requested");
         assert!(!found.contains_key("type"), "type isn't a secret key");
 
-        assert_eq!(extract_secrets("pass=XYZ", &["pass"]).get("pass").map(String::as_str), Some("XYZ"));
-        assert!(extract_secrets("password = nope\n", &["pass"]).is_empty(), "password != pass");
+        assert_eq!(
+            extract_secrets("pass=XYZ", &["pass"])
+                .get("pass")
+                .map(String::as_str),
+            Some("XYZ")
+        );
+        assert!(
+            extract_secrets("password = nope\n", &["pass"]).is_empty(),
+            "password != pass"
+        );
         assert!(extract_secrets("type = smb\nhost = h\n", &["pass"]).is_empty());
     }
 
     #[test]
     fn extract_secrets_pulls_multiple_keys() {
-        let blob = "[d]\ntype = drive\ntoken = {\"a\":1}\nclient_secret = shh\nroot_folder_id = xyz\n";
+        let blob =
+            "[d]\ntype = drive\ntoken = {\"a\":1}\nclient_secret = shh\nroot_folder_id = xyz\n";
         let found = extract_secrets(blob, secret_keys_for(SourceKind::Drive));
         assert_eq!(found.len(), 2);
         assert_eq!(found.get("token").map(String::as_str), Some("{\"a\":1}"));
@@ -1170,11 +1280,16 @@ mod tests {
         }))
         .unwrap();
         let original_pass = extract_secrets(&decrypt_blob(&b, "work"), &["pass"]).remove("pass");
-        assert!(original_pass.is_some(), "password should be stored on create");
+        assert!(
+            original_pass.is_some(),
+            "password should be stored on create"
+        );
 
         // Edit only the host; supply no new secret.
         let mut edited = smb_source("work", false);
-        edited.options.insert("host".into(), "newhost.example.com".into());
+        edited
+            .options
+            .insert("host".into(), "newhost.example.com".into());
         async_io::block_on(b.apply(Changeset {
             upsert_sources: vec![edited],
             ..Default::default()
@@ -1182,7 +1297,10 @@ mod tests {
         .unwrap();
 
         let blob = decrypt_blob(&b, "work");
-        assert!(blob.contains("host = newhost.example.com"), "new host: {blob}");
+        assert!(
+            blob.contains("host = newhost.example.com"),
+            "new host: {blob}"
+        );
         assert!(blob.contains("type = smb"), "type present: {blob}");
         assert_eq!(
             extract_secrets(&blob, &["pass"]).remove("pass"),
@@ -1200,8 +1318,20 @@ mod tests {
             kind: SourceKind::Drive,
             options: BTreeMap::new(),
             new_secrets: BTreeMap::from([
-                ("token".into(), crate::source::SecretValue { value: "tok-v1".into(), obscure: false }),
-                ("client_secret".into(), crate::source::SecretValue { value: "cs-v1".into(), obscure: true }),
+                (
+                    "token".into(),
+                    crate::source::SecretValue {
+                        value: "tok-v1".into(),
+                        obscure: false,
+                    },
+                ),
+                (
+                    "client_secret".into(),
+                    crate::source::SecretValue {
+                        value: "cs-v1".into(),
+                        obscure: true,
+                    },
+                ),
             ]),
         };
         async_io::block_on(b.apply(Changeset {
@@ -1213,12 +1343,18 @@ mod tests {
         let secrets = extract_secrets(&blob, secret_keys_for(SourceKind::Drive));
         assert_eq!(secrets.get("token").map(String::as_str), Some("tok-v1"));
         let obscured_cs_v1 = secrets.get("client_secret").cloned().unwrap();
-        assert_ne!(obscured_cs_v1, "cs-v1", "obscure:true value must not be stored as plaintext");
+        assert_ne!(
+            obscured_cs_v1, "cs-v1",
+            "obscure:true value must not be stored as plaintext"
+        );
 
         // Update only the token; leave client_secret untouched.
         drive.new_secrets = BTreeMap::from([(
             "token".into(),
-            crate::source::SecretValue { value: "tok-v2".into(), obscure: false },
+            crate::source::SecretValue {
+                value: "tok-v2".into(),
+                obscure: false,
+            },
         )]);
         async_io::block_on(b.apply(Changeset {
             upsert_sources: vec![drive],
@@ -1228,7 +1364,11 @@ mod tests {
         let blob = decrypt_blob(&b, "gd");
         let secrets = extract_secrets(&blob, secret_keys_for(SourceKind::Drive));
         assert_eq!(secrets.get("token").map(String::as_str), Some("tok-v2"));
-        assert_eq!(secrets.get("client_secret"), Some(&obscured_cs_v1), "untouched key carried forward byte-for-byte");
+        assert_eq!(
+            secrets.get("client_secret"),
+            Some(&obscured_cs_v1),
+            "untouched key carried forward byte-for-byte"
+        );
     }
 
     #[test]

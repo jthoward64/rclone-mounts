@@ -7,10 +7,10 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 license = "GPL-2.0-or-later"
-repository = "https://invent.kde.org/...placeholder..."
+repository = "https://github.com/jthoward64/rclone-mounts"
 authors = ["Tag Howard <tag@jthoward.dev>"]
 rust-version = "1.80"
 
