@@ -141,20 +141,7 @@ Kirigami.ScrollablePage {
         Kirigami.PlaceholderMessage {
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.gridUnit * 4
-            visible: root.backend.busy && root.sources.length === 0
-            icon.name: "view-refresh-symbolic"
-            text: i18n("Loading…")
-
-            QQC2.BusyIndicator {
-                Layout.alignment: Qt.AlignHCenter
-                running: true
-            }
-        }
-
-        Kirigami.PlaceholderMessage {
-            anchors.centerIn: parent
-            width: parent.width - Kirigami.Units.gridUnit * 4
-            visible: !root.backend.busy && root.sources.length === 0
+            visible: root.backend.loaded && !root.backend.busy && root.sources.length === 0
             icon.name: "folder-cloud-symbolic"
             text: i18n("No sources yet")
             explanation: i18n("A source is an rclone remote (an SMB share, WebDAV server, …) that mounts point at. Add one to get started.")
