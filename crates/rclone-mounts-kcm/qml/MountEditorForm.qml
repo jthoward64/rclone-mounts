@@ -217,7 +217,7 @@ ColumnLayout {
             id: readOnlyBox
             Layout.fillWidth: true
             Kirigami.FormData.label: i18n("Read-only:")
-            text: i18n("Mount without read-only")
+            text: i18n("Mount read-only")
             onToggled: root.commitLive()
         }
         // Cache size/time only mean anything once caching is on at all.

@@ -45,6 +45,11 @@ mod ffi {
         #[qml_element]
         // True when there are uncommitted edits. QML binds kcm.needsSave to this.
         #[qproperty(bool, dirty)]
+        // True once the first `load()` has completed successfully. QML uses
+        // this to tell the framework's construction-time load() call apart
+        // from a later Reset-click load() call (see `set_scope`'s own
+        // "already loaded" check for the other consumer of this state).
+        #[qproperty(bool, loaded)]
         // True while a load/commit is in flight; QML can show a busy indicator.
         #[qproperty(bool, busy)]
         // Last error, empty when the last op succeeded. Surfaced in the UI.
@@ -244,6 +249,7 @@ use std::sync::Arc;
 
 pub struct BackendControllerRust {
     dirty: bool,
+    loaded: bool,
     busy: bool,
     error_string: QString,
     system_scope: bool,
@@ -322,6 +328,7 @@ impl Default for BackendControllerRust {
             serde_json::to_string(&credential_kinds()).unwrap_or_else(|_| "[]".to_string());
         Self {
             dirty: false,
+            loaded: false,
             busy: false,
             error_string: QString::default(),
             system_scope: false,
@@ -878,6 +885,7 @@ impl ffi::BackendController {
                             rust.pending = Changeset::default();
                             rust.statuses = statuses;
                         }
+                        obj.as_mut().set_loaded(true);
                         obj.as_mut().refresh();
                     }
                     Err(e) => {

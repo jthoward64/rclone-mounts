@@ -3,6 +3,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.kirigami.layouts as KirigamiLayouts
@@ -37,6 +38,12 @@ import dev.jthoward.RcloneMounts
 // this outer id, silently breaking every binding that depends on it.
 KCM.AbstractKCM {
     id: root
+
+    // No "Use Defaults" button: there's no hardcoded default changeset to
+    // restore to (only the on-disk applied state and whatever's pending),
+    // so a Defaults button here would have nothing meaningful to do. No
+    // Help button either: there's no X-DocPath/handbook behind it.
+    KCM.ConfigModule.buttons: KCM.ConfigModule.Apply
 
     // Best-effort floor on the host window's width: with the list column
     // pinned via `columnView.columnResizeMode` below, the pane pushed next
@@ -149,11 +156,23 @@ KCM.AbstractKCM {
     }
 
     // The C++ shim emits these in response to the KCM's Apply/Reset/load.
+    // The framework has no separate "Reset was clicked" signal — the KCM's
+    // load() override fires loadRequested both right after construction and
+    // on every Reset/Cancel click — so `backendController.loaded` (true once
+    // the first load has actually hydrated state) is what tells the two
+    // apart: not yet loaded means this is the construction-time call.
     Connections {
         target: kcm
-        function onLoadRequested() { backendController.load() }
+        function onLoadRequested() {
+            if (backendController.loaded) {
+                // Reset click: just drop the pending changeset back to the
+                // already-applied state, without re-reading from disk.
+                backendController.reset();
+            } else {
+                backendController.load();
+            }
+        }
         function onSaveRequested() { backendController.commit() }
-        function onDefaultsRequested() { backendController.reset() }
     }
 
     // Dirty state drives the framework's Apply/Reset button enablement.
@@ -215,6 +234,10 @@ KCM.AbstractKCM {
             id: pageRowItem
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // Prevent poking at another mount/source while a commit from a
+            // prior Apply is still running in the background (see the busy
+            // overlay below, which is what actually blocks input here).
+            enabled: !backendController.busy
             // A plain sibling instance, not a Component — this is the
             // pattern Kirigami's own PageRow docs use for `initialPage`
             // (a Page declared and referenced by id). Wrapping it in a
@@ -256,5 +279,42 @@ KCM.AbstractKCM {
     // --- Interactive source wizard (Google Drive OAuth, iCloud 2FA) -------
     SourceWizard {
         id: sourceWizard
+    }
+
+    // Apply/OK gives no feedback of its own — `save()` (cpp/kcm_rclone_mounts.cpp)
+    // returns as soon as it emits saveRequested, before backendController.commit()'s
+    // background thread actually finishes, so the host considers the KCM done
+    // saving while it's still writing/reloading. This overlay is what makes
+    // that in-flight work visible and, via its MouseArea eating every click,
+    // is what actually stops you from opening another mount/source mid-save
+    // (pageRowItem.enabled above is just belt-and-braces for keyboard focus).
+    Item {
+        anchors.fill: parent
+        visible: backendController.busy
+        z: 1000
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.AllButtons
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            color: Kirigami.Theme.backgroundColor
+            opacity: 0.6
+        }
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            QQC2.BusyIndicator {
+                Layout.alignment: Qt.AlignHCenter
+                running: backendController.busy
+            }
+            QQC2.Label {
+                Layout.alignment: Qt.AlignHCenter
+                text: i18n("Please wait…")
+            }
+        }
     }
 }

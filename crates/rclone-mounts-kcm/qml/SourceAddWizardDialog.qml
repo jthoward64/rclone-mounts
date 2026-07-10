@@ -77,41 +77,45 @@ KirigamiDialogs.Dialog {
 
     onRejected: root.close()
 
-    Kirigami.FormLayout {
-        Layout.fillWidth: true
-        visible: root.step === 0
+    ColumnLayout {
+        Layout.preferredWidth: root.preferredWidth
 
-        QQC2.ComboBox {
-            id: kindBox
-            Kirigami.FormData.label: i18n("Type:")
-            model: root.helpers.sourceKinds
-            textRole: "label"
-            valueRole: "tag"
-        }
-        QQC2.TextField {
-            id: nameField
-            Kirigami.FormData.label: i18n("Name:")
-            placeholderText: i18n("e.g. Work share")
-        }
-    }
+        Kirigami.FormLayout {
+            Layout.fillWidth: true
+            visible: root.step === 0
 
-    Kirigami.FormLayout {
-        Layout.fillWidth: true
-        visible: root.step === 1
-
-        SourceKindFieldsRepeater {
-            id: fieldsRepeater
-            helpers: root.helpers
-            // Only reachable when step === 1, which already implies
-            // kindSupported — see advance() — so chosenKind is always a
-            // flat-schema kind here.
-            kind: root.step === 1 ? root.chosenKind : ""
+            QQC2.ComboBox {
+                id: kindBox
+                Kirigami.FormData.label: i18n("Type:")
+                model: root.helpers.sourceKinds
+                textRole: "label"
+                valueRole: "tag"
+            }
+            QQC2.TextField {
+                id: nameField
+                Kirigami.FormData.label: i18n("Name:")
+                placeholderText: i18n("e.g. Work share")
+            }
         }
-        QQC2.TextField {
-            id: secretField
-            Kirigami.FormData.label: i18n("Password:")
-            echoMode: TextInput.Password
-            placeholderText: i18n("password")
+
+        Kirigami.FormLayout {
+            Layout.fillWidth: true
+            visible: root.step === 1
+
+            SourceKindFieldsRepeater {
+                id: fieldsRepeater
+                helpers: root.helpers
+                // Only reachable when step === 1, which already implies
+                // kindSupported — see advance() — so chosenKind is always a
+                // flat-schema kind here.
+                kind: root.step === 1 ? root.chosenKind : ""
+            }
+            QQC2.TextField {
+                id: secretField
+                Kirigami.FormData.label: i18n("Password:")
+                echoMode: TextInput.Password
+                placeholderText: i18n("password")
+            }
         }
     }
 }
