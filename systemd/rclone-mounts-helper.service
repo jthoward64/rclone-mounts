@@ -12,7 +12,8 @@ ExecStart=/usr/libexec/rclone-mounts-helper
 # Sandboxing
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/etc/rclone-mounts /etc/systemd/system /etc/credstore.encrypted
+ConfigurationDirectory=rclone-mounts
+ReadWritePaths=/etc/systemd/system /etc/credstore.encrypted
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
