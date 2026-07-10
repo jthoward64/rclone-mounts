@@ -125,7 +125,14 @@ add_dependencies(kcm_rclone_mounts cargo-build_rclone_mounts_kcm)
 install(FILES kcm_rclone_mounts.desktop
     DESTINATION ${KDE_INSTALL_APPDIR})
 
-install(FILES data/dev.jthoward.RcloneMounts.Helper.service
+# Service/unit files reference the helper's install path, which varies by
+# platform (e.g. lib/libexec vs libexec); generate them rather than hardcoding it.
+set(RCLONE_MOUNTS_HELPER_PATH "${KDE_INSTALL_FULL_LIBEXECDIR}/rclone-mounts-helper")
+
+configure_file(data/dev.jthoward.RcloneMounts.Helper.service.in
+    ${CMAKE_CURRENT_BINARY_DIR}/dev.jthoward.RcloneMounts.Helper.service
+    @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dev.jthoward.RcloneMounts.Helper.service
     DESTINATION ${KDE_INSTALL_DATAROOTDIR}/dbus-1/system-services)
 
 install(FILES data/dev.jthoward.RcloneMounts.Helper.conf
@@ -134,7 +141,10 @@ install(FILES data/dev.jthoward.RcloneMounts.Helper.conf
 install(FILES data/dev.jthoward.rclone-mounts.policy
     DESTINATION ${KDE_INSTALL_DATAROOTDIR}/polkit-1/actions)
 
-install(FILES systemd/rclone-mounts-helper.service
+configure_file(systemd/rclone-mounts-helper.service.in
+    ${CMAKE_CURRENT_BINARY_DIR}/rclone-mounts-helper.service
+    @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/rclone-mounts-helper.service
     DESTINATION ${KDE_INSTALL_SYSTEMDUNITDIR}/system)
 
 # Helper binary path matches what dev.jthoward.RcloneMounts.Helper.service expects.

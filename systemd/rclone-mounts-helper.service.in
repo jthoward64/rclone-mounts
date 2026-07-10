@@ -7,7 +7,7 @@ After=dbus.socket
 [Service]
 Type=dbus
 BusName=dev.jthoward.RcloneMounts.Helper
-ExecStart=/usr/libexec/rclone-mounts-helper
+ExecStart=@RCLONE_MOUNTS_HELPER_PATH@
 
 # Sandboxing
 NoNewPrivileges=true
