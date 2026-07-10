@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// `upsert_mount`'s arg count mirrors its QML-invokable call signature (one
+// positional arg per edited field); cxx-qt's generated C++ bridging code for
+// it re-triggers the same lint but can't be annotated directly (cxx-qt-build
+// only recognizes a fixed attribute allowlist inside `#[cxx_qt::bridge]`).
+#![allow(clippy::too_many_arguments)]
+
 //! BackendController — the root QObject the QML UI binds to.
 //!
 //! Lifecycle is driven by the C++ KCM shim purely through Qt signals/slots
@@ -841,11 +847,9 @@ impl ffi::BackendController {
             let system_available =
                 async_io::block_on(rclone_mounts_core::backend::system_scope_available());
 
-            let outcome: rclone_mounts_core::Result<(
-                Arc<dyn Backend>,
-                State,
-                BTreeMap<String, String>,
-            )> = async_io::block_on(async {
+            type LoadOutcome =
+                rclone_mounts_core::Result<(Arc<dyn Backend>, State, BTreeMap<String, String>)>;
+            let outcome: LoadOutcome = async_io::block_on(async {
                 let backend: Arc<dyn Backend> = if system {
                     Arc::new(HelperBackend::new().await?)
                 } else {

@@ -9,6 +9,10 @@
 
 use zbus::{proxy, zvariant::OwnedObjectPath};
 
+/// One entry of `EnableUnitFiles`'/`DisableUnitFiles`' change list:
+/// `(change_type, unit_file_path, destination)`, per systemd's `sss` convention.
+type UnitFileChange = (String, String, String);
+
 #[proxy(
     interface = "org.freedesktop.systemd1.Manager",
     default_service = "org.freedesktop.systemd1",
@@ -32,13 +36,13 @@ pub trait Manager {
         files: &[&str],
         runtime: bool,
         force: bool,
-    ) -> zbus::Result<(bool, Vec<(String, String, String)>)>;
+    ) -> zbus::Result<(bool, Vec<UnitFileChange>)>;
 
     fn disable_unit_files(
         &self,
         files: &[&str],
         runtime: bool,
-    ) -> zbus::Result<Vec<(String, String, String)>>;
+    ) -> zbus::Result<Vec<UnitFileChange>>;
 
     /// Returns the object path of the loaded unit. `LoadUnit` loads on demand
     /// without starting; `GetUnit` returns NoSuchUnit if not yet loaded.
