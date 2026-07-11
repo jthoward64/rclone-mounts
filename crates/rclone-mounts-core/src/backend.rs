@@ -479,6 +479,23 @@ impl HelperBackend {
     }
 }
 
+/// Read the admin-configured shared client credential for `kind`, if any,
+/// straight over the system bus — independent of the caller's current
+/// [`Backend`]/scope. Unlike [`HelperBackend::provider_override`] (gated by
+/// the full `read-system` admin action, and only ever wired up when the KCM
+/// itself is switched to system scope), this goes through the lighter
+/// `read-shared-credential` polkit action so a plain *user-scope* session
+/// can pick up a credential the admin opted to share with every local user —
+/// without switching scope, which a non-admin user can't do anyway.
+pub async fn fetch_shared_provider_credential(kind: SourceKind) -> Result<Option<(String, String)>> {
+    let conn = zbus::Connection::system().await?;
+    let proxy = zbus::Proxy::new(&conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
+    let (has_value, client_id, client_secret): (bool, String, String) = proxy
+        .call("SharedProviderCredential", &(kind.as_tag(),))
+        .await?;
+    Ok(has_value.then_some((client_id, client_secret)))
+}
+
 /// Whether the privileged helper is reachable at all — i.e. whether system
 /// scope is worth offering in the UI. Checks the bus itself (is the service
 /// name owned, or D-Bus-activatable) rather than calling into our own

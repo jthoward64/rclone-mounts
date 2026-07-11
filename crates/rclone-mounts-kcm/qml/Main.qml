@@ -45,6 +45,13 @@ KCM.AbstractKCM {
     // Help button either: there's no X-DocPath/handbook behind it.
     KCM.ConfigModule.buttons: KCM.ConfigModule.Apply
 
+    // AbstractKCM's default `framedView: true` reserves a 6px margin around
+    // the whole content, expecting an inner scrollview to draw its own frame
+    // there instead. Nothing here does that, so it just reads as a stray
+    // border around the KCM's edge — disable it to let the tab bar/PageRow
+    // reach the host window's edges directly.
+    framedView: false
+
     // Best-effort floor on the host window's width: with the list column
     // pinned via `columnView.columnResizeMode` below, the pane pushed next
     // to it (source/mount editor, credentials) has nowhere to go if the
@@ -91,6 +98,11 @@ KCM.AbstractKCM {
             return;
         }
         root.scopeSwitchBlocked = false;
+        // The pushed editor/credentials pane (if any) refers to state from
+        // the scope being left — pop it back to the list so switching scopes
+        // doesn't leave a stale right panel open.
+        if (pageRowItem.depth > 1)
+            pageRowItem.pop(mainListPage);
         backendController.setScope(system);
     }
 

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Three-tier resolution of the OAuth client id/secret used for Google
-//! Drive's `rclone config create` invocation: a per-source user override
-//! beats a system-scope admin override beats a build-time compiled default.
-//! If none apply, rclone falls back to its own shared client (subject to
-//! Google's shared rate limits) — this app never requires the user to have
-//! one.
+//! Resolution of the OAuth client id/secret used for Google Drive's `rclone
+//! config create` invocation, in precedence order: a per-source user
+//! override beats the admin override (read directly when the caller is
+//! already system-scope, otherwise via the lightweight cross-scope D-Bus
+//! read — see [`crate::backend::fetch_shared_provider_credential`], since an
+//! admin-shared credential is meant to work for every local user's own
+//! mounts too) beats a build-time compiled default. If none apply, rclone
+//! falls back to its own shared client (subject to Google's shared rate
+//! limits) — this function never requires the user to have one, though
+//! callers (e.g. the sign-in wizard) may choose to require it anyway.
 
 use crate::backend::Backend;
 use crate::source::SourceKind;
@@ -38,6 +42,17 @@ pub async fn resolve_drive_client_credentials(
         }
     }
     if let Some(pair) = backend.provider_override(SourceKind::Drive).await? {
+        return Ok(Some(pair));
+    }
+    // `backend.provider_override` only ever sees the admin override when the
+    // active backend is itself system-scope. A user-scope backend can't
+    // decrypt that credential directly, but the whole point of an admin
+    // sharing it is that every local user's *own* Drive mounts get to use
+    // it too — so fall back to the lightweight, no-admin-auth D-Bus read.
+    // Best-effort: if the helper isn't installed/reachable, treat that the
+    // same as "no shared credential" rather than failing sign-in over it.
+    if let Ok(Some(pair)) = crate::backend::fetch_shared_provider_credential(SourceKind::Drive).await
+    {
         return Ok(Some(pair));
     }
     Ok(build_time_drive_credentials().map(|(a, b)| (a.to_string(), b.to_string())))

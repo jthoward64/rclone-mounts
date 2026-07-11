@@ -41,6 +41,14 @@ Kirigami.ScrollablePage {
     ColumnLayout {
         width: root.width
 
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.smallSpacing
+            visible: root.kinds.length > 0
+            type: Kirigami.MessageType.Information
+            text: i18n("A credential set here is shared with every user on this system — each person's own mounts can use it to sign in, not just system-wide mounts.")
+        }
+
         Kirigami.PlaceholderMessage {
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4

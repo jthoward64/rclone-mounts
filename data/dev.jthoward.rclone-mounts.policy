@@ -25,4 +25,20 @@
       <allow_active>auth_admin_keep</allow_active>
     </defaults>
   </action>
+
+  <!-- Deliberately lighter than read-system: an admin-configured shared
+       sign-in credential (e.g. a Drive OAuth client id/secret) is meant to
+       be usable by every local user's own mounts, so reading it must not
+       require an admin password — that would defeat the point of sharing
+       it. This action only ever exposes the credential the admin explicitly
+       opted to share; it grants no access to system mount configuration. -->
+  <action id="dev.jthoward.rclone-mounts.read-shared-credential">
+    <description>Read the administrator-configured shared sign-in credential</description>
+    <message>Read the shared sign-in credential configured by the administrator.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
 </policyconfig>

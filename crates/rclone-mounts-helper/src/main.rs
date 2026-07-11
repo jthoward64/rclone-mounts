@@ -4,8 +4,9 @@
 //!
 //! Exposes `dev.jthoward.RcloneMounts.Helper1` on the system bus. Bounded API:
 //! no method accepts a free-form path. Polkit actions:
-//!   - dev.jthoward.rclone-mounts.read-system   (List* methods)
-//!   - dev.jthoward.rclone-mounts.modify-system (ApplyChanges, DaemonReload)
+//!   - dev.jthoward.rclone-mounts.read-system         (List* methods)
+//!   - dev.jthoward.rclone-mounts.modify-system        (ApplyChanges, DaemonReload)
+//!   - dev.jthoward.rclone-mounts.read-shared-credential (SharedProviderCredential)
 //!
 //! Wire format for ApplyChanges: TOML-encoded [`Changeset`]. TOML is human-
 //! diffable in logs, and TOML's strictness about unknown fields gives us a
@@ -30,6 +31,12 @@ const OBJECT_PATH: &str = "/dev/jthoward/RcloneMounts/Helper";
 const ACTION_READ: &str = "dev.jthoward.rclone-mounts.read-system";
 /// Polkit action for state-changing methods (apply, reload, start/stop).
 const ACTION_MODIFY: &str = "dev.jthoward.rclone-mounts.modify-system";
+/// Polkit action gating `SharedProviderCredential`. Deliberately separate
+/// from and lighter than `ACTION_READ`: an admin-configured shared
+/// credential is meant to be usable by every local user's own mounts, so
+/// reading it must not require the admin auth that guards the rest of
+/// system-wide read access.
+const ACTION_READ_SHARED_CREDENTIAL: &str = "dev.jthoward.rclone-mounts.read-shared-credential";
 
 struct Helper;
 
@@ -273,6 +280,32 @@ impl Helper {
             .provider_override(kind)
             .await
             .map_err(|e| zbus::fdo::Error::Failed(format!("provider override: {e}")))?;
+        Ok(match pair {
+            Some((id, secret)) => (true, id, secret),
+            None => (false, String::new(), String::new()),
+        })
+    }
+
+    /// The admin-configured shared credential for `kind`, if any. Same data
+    /// as `provider_override`, but gated by `read-shared-credential` — no
+    /// admin auth — instead of `read-system`, because this is the read path
+    /// a *user-scope* sign-in uses to pick up a credential the admin opted
+    /// to share with everyone. Never interactive: this must never pop an
+    /// auth dialog just because a user opened the "add a source" wizard.
+    async fn shared_provider_credential(
+        &self,
+        kind: String,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<(bool, String, String)> {
+        Self::authorize(conn, &hdr, ACTION_READ_SHARED_CREDENTIAL, false).await?;
+        let kind = SourceKind::from_tag(&kind)
+            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("unknown kind: {kind}")))?;
+        let backend = Self::make_backend().await?;
+        let pair = backend
+            .provider_override(kind)
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("shared credential: {e}")))?;
         Ok(match pair {
             Some((id, secret)) => (true, id, secret),
             None => (false, String::new(), String::new()),
