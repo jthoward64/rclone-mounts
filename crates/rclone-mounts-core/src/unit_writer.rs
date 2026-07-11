@@ -71,6 +71,26 @@ pub fn validate_name(name: &str) -> Result<()> {
     }
 }
 
+/// Validate a name used as a credential store filename: either a real
+/// mount/source name ([`validate_name`]), or the reserved
+/// `__provider_override_<kind>` pseudo-name (see
+/// `backend::provider_override_name`) that the admin-override feature writes
+/// under the same store. The leading underscore keeps it unreachable as a
+/// real source name, but that also means plain `validate_name` rejects it —
+/// so credential storage needs this wider check instead.
+pub fn validate_credential_name(name: &str) -> Result<()> {
+    if let Some(kind) = name.strip_prefix("__provider_override_") {
+        let ok = !kind.is_empty()
+            && kind
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'-'));
+        if ok {
+            return Ok(());
+        }
+    }
+    validate_name(name)
+}
+
 /// Reject a control character (newline, CR, NUL, ...) in a value that's
 /// about to be embedded in a generated systemd unit file. Unit files are
 /// parsed line-by-line, so `quote_unit_arg`'s quoting only protects against

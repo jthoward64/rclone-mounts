@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::UnitStore;
-use crate::unit_writer::validate_name;
+use crate::unit_writer::{validate_credential_name, validate_name};
 use crate::{Error, Result};
 use std::fs;
 use std::io::Write;
@@ -58,7 +58,7 @@ impl LocalUnitStore {
     }
 
     fn credential_path(&self, name: &str) -> Result<PathBuf> {
-        validate_name(name)?;
+        validate_credential_name(name)?;
         Ok(self.credential_dir.join(name))
     }
 
