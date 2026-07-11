@@ -13,6 +13,7 @@ import org.kde.kirigami as Kirigami
 // writes it to disk or discards it.
 ColumnLayout {
     id: root
+    Layout.fillWidth: true
 
     required property var helpers
     required property var backend
@@ -38,7 +39,8 @@ ColumnLayout {
     readonly property string sourceDisplayName: root.helpers.sourceDisplay(root.sources, root.sourceId)
     readonly property var sourceObj: {
         for (let i = 0; i < root.sources.length; i++)
-            if (root.sources[i].name === root.sourceId) return root.sources[i];
+            if (root.sources[i].name === root.sourceId)
+                return root.sources[i];
         return null;
     }
     readonly property string sourceKind: root.sourceObj ? root.sourceObj.kind : ""
@@ -56,9 +58,7 @@ ColumnLayout {
     // writable, the cache mode is below Writes, and the backend lacks
     // PutStream (can't stream an upload without buffering it first) — see
     // the "can't stream" log line at mount time.
-    readonly property bool cacheTooLowForSource: !readOnlyBox.checked
-        && !root.sourceCanStream
-        && (cacheModeBox.currentValue === "off" || cacheModeBox.currentValue === "minimal")
+    readonly property bool cacheTooLowForSource: !readOnlyBox.checked && !root.sourceCanStream && (cacheModeBox.currentValue === "off" || cacheModeBox.currentValue === "minimal")
     // Whether this source's kind notices remote changes on its own via
     // rclone's --poll-interval (Drive today; see KindSchema::supports_polling
     // for the rest of the list rclone itself supports). Gates both the
@@ -71,10 +71,22 @@ ColumnLayout {
     // for "Custom…", which reveals customUmaskField below instead of
     // mapping to a fixed value.
     readonly property var umaskPresets: [
-        { value: 63, label: i18n("Private") },
-        { value: 18, label: i18n("Anyone can read") },
-        { value: 0, label: i18n("Anyone can edit") },
-        { value: -1, label: i18n("Custom…") }
+        {
+            value: 63,
+            label: i18n("Private")
+        },
+        {
+            value: 18,
+            label: i18n("Anyone can read")
+        },
+        {
+            value: 0,
+            label: i18n("Anyone can edit")
+        },
+        {
+            value: -1,
+            label: i18n("Custom…")
+        }
     ]
     readonly property bool customUmaskSelected: umaskBox.currentValue === -1
     readonly property bool customUmaskValid: /^[0-7]{1,4}$/.test(customUmaskField.text)
@@ -100,14 +112,11 @@ ColumnLayout {
         // other kind, or an existing mount's own stored value — keeps
         // whatever `o.dir_cache_time_secs` already says (null means "rclone
         // default" for a plain new mount).
-        let defaultDirCacheSecs = (!root.editing && root.sourceSupportsPolling)
-            ? root.helpers.dirCachePollingDefaultSecs
-            : (o.dir_cache_time_secs ?? null);
+        let defaultDirCacheSecs = (!root.editing && root.sourceSupportsPolling) ? root.helpers.dirCachePollingDefaultSecs : (o.dir_cache_time_secs ?? null);
         dirCacheSlider.value = root.helpers.durationIndexFor(root.helpers.dirCacheSteps, defaultDirCacheSecs);
         let pollSecs = o.poll_interval_secs ?? null;
         pollEnabledBox.checked = pollSecs !== 0;
-        pollIntervalSlider.value = root.helpers.durationIndexFor(
-            root.helpers.pollIntervalSteps, pollSecs === 0 ? null : pollSecs);
+        pollIntervalSlider.value = root.helpers.durationIndexFor(root.helpers.pollIntervalSteps, pollSecs === 0 ? null : pollSecs);
         let umaskIdx = root.umaskPresets.findIndex(p => p.value === o.umask);
         if (umaskIdx >= 0) {
             umaskBox.currentIndex = umaskIdx;
@@ -146,9 +155,7 @@ ColumnLayout {
             // stored value alone (null == "no opinion", same as never having
             // set it) rather than writing a 0 that would just be confusing
             // if the source's kind ever changed.
-            poll_interval_secs: root.sourceSupportsPolling
-                ? (pollEnabledBox.checked ? root.helpers.pollIntervalSteps[pollIntervalSlider.value].seconds : 0)
-                : null,
+            poll_interval_secs: root.sourceSupportsPolling ? (pollEnabledBox.checked ? root.helpers.pollIntervalSteps[pollIntervalSlider.value].seconds : 0) : null,
             umask: root.customUmaskSelected ? parseInt(customUmaskField.text, 8) : umaskBox.currentValue
         };
         return {
@@ -294,9 +301,11 @@ ColumnLayout {
         RowLayout {
             Kirigami.FormData.label: i18n("Poll for changes:")
             visible: cacheModeBox.currentValue !== "off" && root.sourceSupportsPolling
+            Layout.fillWidth: true
             QQC2.Switch {
                 id: pollEnabledBox
                 onToggled: root.commitLive()
+                Layout.fillWidth: true
             }
             Kirigami.ContextualHelpButton {
                 toolTipText: i18n("This source can tell rclone about changes made elsewhere as they happen, instead of waiting for the directory cache above to expire. Turning this off relies on the directory cache alone — lower it if you do.")
@@ -326,23 +335,26 @@ ColumnLayout {
         RowLayout {
             Kirigami.FormData.label: i18n("On mount start:")
             visible: cacheModeBox.currentValue !== "off"
-            QQC2.CheckBox {
-                id: vfsRefreshBox
+            ColumnLayout {
                 Layout.fillWidth: true
-                text: i18n("Refresh the directory cache in the background")
-                onToggled: root.commitLive()
+                QQC2.CheckBox {
+                    id: vfsRefreshBox
+                    Layout.fillWidth: true
+                    text: i18n("Refresh the directory cache in the background")
+                    onToggled: root.commitLive()
+                }
+                QQC2.Label {
+                    Kirigami.FormData.isSection: true
+                    visible: cacheModeBox.currentValue !== "off"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    opacity: 0.7
+                    text: i18n("Turning this off sends fewer requests to the server and can reduce RAM use, but folders may freeze or load slowly the first time you browse into them.")
+                }
             }
             Kirigami.ContextualHelpButton {
                 toolTipText: i18n("Walks the whole remote right when the mount starts so folders show up instantly once you browse in — otherwise the first listing of each folder is fetched on demand. Best left off for very large remotes, since it means a burst of requests at every mount start.")
             }
-        }
-        QQC2.Label {
-            Kirigami.FormData.isSection: true
-            visible: cacheModeBox.currentValue !== "off"
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            opacity: 0.7
-            text: i18n("Turning this off sends fewer requests to the server and can reduce RAM use, but folders may freeze or load slowly the first time you browse into them.")
         }
         QQC2.ComboBox {
             id: umaskBox
@@ -360,7 +372,9 @@ ColumnLayout {
             visible: root.customUmaskSelected
             placeholderText: "022"
             inputMethodHints: Qt.ImhDigitsOnly
-            validator: RegularExpressionValidator { regularExpression: /[0-7]{0,4}/ }
+            validator: RegularExpressionValidator {
+                regularExpression: /[0-7]{0,4}/
+            }
             onEditingFinished: root.commitLive()
         }
     }

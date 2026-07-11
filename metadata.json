@@ -1,8 +1,8 @@
 {
     "KPlugin": {
         "Name": "Rclone Mounts",
-        "Description": "Manage rclone-backed mounts (SMB, Drive, WebDAV)",
-        "Icon": "folder-cloud-symbolic",
+        "Description": "Mount network drives using rclone",
+        "Icon": "document-open-remote",
         "Category": "Network",
         "Authors": [
             {
@@ -11,7 +11,7 @@
             }
         ],
         "License": "GPL-2.0-or-later",
-        "Version": "0.1.0",
+        "Version": "0.1.1",
         "EnabledByDefault": true
     },
     "X-KDE-System-Settings-Parent-Category": "network",
