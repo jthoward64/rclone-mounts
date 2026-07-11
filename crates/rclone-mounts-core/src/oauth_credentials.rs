@@ -51,9 +51,18 @@ pub async fn resolve_drive_client_credentials(
     // it too — so fall back to the lightweight, no-admin-auth D-Bus read.
     // Best-effort: if the helper isn't installed/reachable, treat that the
     // same as "no shared credential" rather than failing sign-in over it.
-    if let Ok(Some(pair)) = crate::backend::fetch_shared_provider_credential(SourceKind::Drive).await
-    {
-        return Ok(Some(pair));
+    //
+    // Skipped under `cargo test`: this is a real system-bus call with no
+    // fake/mock plumbed through `Backend`, so a unit test would otherwise
+    // silently pick up whatever the *actual machine running the test* has
+    // configured system-wide — as opposed to testing this fallback chain's
+    // own logic in isolation.
+    if !cfg!(test) {
+        if let Ok(Some(pair)) =
+            crate::backend::fetch_shared_provider_credential(SourceKind::Drive).await
+        {
+            return Ok(Some(pair));
+        }
     }
     Ok(build_time_drive_credentials().map(|(a, b)| (a.to_string(), b.to_string())))
 }
@@ -83,6 +92,9 @@ mod tests {
             unimplemented!()
         }
         async fn stop_mount(&self, _: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn restart_mount(&self, _: &str) -> Result<()> {
             unimplemented!()
         }
         async fn mount_status(&self, _: &str) -> Result<String> {

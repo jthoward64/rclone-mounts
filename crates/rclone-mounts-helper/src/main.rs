@@ -224,6 +224,24 @@ impl Helper {
         Ok(())
     }
 
+    /// Restart a mount's unit now — the reliable way to force its VFS
+    /// directory cache to drop and re-list, since there's no remote-control
+    /// endpoint wired up. Authorized by `modify-system`.
+    async fn restart_mount(
+        &self,
+        name: String,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        Self::authorize(conn, &hdr, ACTION_MODIFY, true).await?;
+        let backend = Self::make_backend().await?;
+        backend
+            .restart_mount(&name)
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("restart {name}: {e}")))?;
+        Ok(())
+    }
+
     /// systemd `ActiveState` of a mount's unit. Authorized by `read-system`.
     async fn mount_status(
         &self,

@@ -18,6 +18,7 @@ QQC2.ItemDelegate {
 
     signal startRequested()
     signal stopRequested()
+    signal restartRequested()
     signal editRequested()
     signal removeRequested()
 
@@ -79,6 +80,15 @@ QQC2.ItemDelegate {
             QQC2.ToolTip.text: text
             QQC2.ToolTip.visible: hovered
             onClicked: root.stopRequested()
+        }
+        QQC2.ToolButton {
+            icon.name: "view-refresh-symbolic"
+            text: i18n("Refresh directory cache")
+            display: QQC2.ToolButton.IconOnly
+            visible: root.helpers.isRunning(root.mount.active)
+            QQC2.ToolTip.text: i18n("Restart the mount to drop its cached directory listing and re-fetch it from the remote")
+            QQC2.ToolTip.visible: hovered
+            onClicked: root.restartRequested()
         }
         QQC2.ToolButton {
             icon.name: "edit-delete-symbolic"

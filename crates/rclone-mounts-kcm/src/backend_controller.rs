@@ -171,6 +171,12 @@ mod ffi {
         #[qinvokable]
         fn stop_mount(self: Pin<&mut BackendController>, name: &QString);
 
+        /// Restart a mount's unit now (live action, independent of Apply) —
+        /// forces its VFS directory cache to drop and re-list, since rclone
+        /// has no remote-control endpoint wired up here.
+        #[qinvokable]
+        fn restart_mount(self: Pin<&mut BackendController>, name: &QString);
+
         /// Re-query the active state of every applied mount and refresh the
         /// model. Runs the queries on a worker thread and posts the result back,
         /// so the UI's poll timer never blocks the GUI thread — important once
@@ -438,6 +444,24 @@ async fn read_statuses(backend: &dyn Backend, names: &[String]) -> BTreeMap<Stri
         map.insert(name.clone(), state);
     }
     map
+}
+
+/// A live mount action triggered from the UI, independent of Apply/Cancel.
+#[derive(Debug, Clone, Copy)]
+enum MountAction {
+    Start,
+    Stop,
+    Restart,
+}
+
+impl MountAction {
+    fn verb(self) -> &'static str {
+        match self {
+            MountAction::Start => "start",
+            MountAction::Stop => "stop",
+            MountAction::Restart => "restart",
+        }
+    }
 }
 
 /// What a wizard step resolved to, handed back to the GUI thread to apply.
@@ -1125,6 +1149,30 @@ impl ffi::BackendController {
             .sources
             .iter()
             .any(|s| s.name == name);
+        // Any mount currently referencing this source (applied or still
+        // pending) would be left with a dangling `source` once it's gone —
+        // `Backend::apply`'s `validate_references` would reject the whole
+        // commit for it, which would only ever surface as a generic "source
+        // no longer exists" error at Apply time. Cascade the removal here
+        // instead, the same way `remove_mount` itself would.
+        let dependent_mount_names: Vec<String> = self
+            .as_ref()
+            .rust()
+            .applied
+            .preview(&self.as_ref().rust().pending)
+            .mounts
+            .iter()
+            .filter(|m| m.source == name)
+            .map(|m| m.name.clone())
+            .collect();
+        let applied_mount_names: std::collections::HashSet<String> = self
+            .as_ref()
+            .rust()
+            .applied
+            .mounts
+            .iter()
+            .map(|m| m.name.clone())
+            .collect();
         {
             let mut rust = self.as_mut().rust_mut();
             let p = &mut rust.pending;
@@ -1132,16 +1180,31 @@ impl ffi::BackendController {
             if in_applied && !p.delete_sources.contains(&name) {
                 p.delete_sources.push(name);
             }
+            for mount_name in &dependent_mount_names {
+                p.upsert_mounts.retain(|m| &m.name != mount_name);
+                if applied_mount_names.contains(mount_name) && !p.delete_mounts.contains(mount_name)
+                {
+                    p.delete_mounts.push(mount_name.clone());
+                }
+            }
         }
         self.as_mut().refresh();
     }
 
     fn start_mount(mut self: Pin<&mut Self>, name: &QString) {
-        self.as_mut().lifecycle(name, true);
+        self.as_mut().lifecycle(name, MountAction::Start);
     }
 
     fn stop_mount(mut self: Pin<&mut Self>, name: &QString) {
-        self.as_mut().lifecycle(name, false);
+        self.as_mut().lifecycle(name, MountAction::Stop);
+    }
+
+    /// Restart a mount now — the reliable way to force a stale VFS directory
+    /// cache to drop and re-list from the remote, since there's no `rclone
+    /// rc vfs/forget`-style remote control wired up and no portable way to
+    /// signal just the one rclone process backing this mount.
+    fn restart_mount(mut self: Pin<&mut Self>, name: &QString) {
+        self.as_mut().lifecycle(name, MountAction::Restart);
     }
 
     fn refresh_status(mut self: Pin<&mut Self>) {
@@ -1181,9 +1244,9 @@ impl ffi::BackendController {
         });
     }
 
-    /// Shared body for start/stop: fire the live action, surface any error,
-    /// then re-read status and refresh the model.
-    fn lifecycle(mut self: Pin<&mut Self>, name: &QString, start: bool) {
+    /// Shared body for start/stop/restart: fire the live action, surface any
+    /// error, then re-read status and refresh the model.
+    fn lifecycle(mut self: Pin<&mut Self>, name: &QString, action: MountAction) {
         let name = name.to_string();
         self.as_mut().set_error_string(QString::default());
         if self.as_ref().rust().backend.is_none() {
@@ -1196,15 +1259,15 @@ impl ffi::BackendController {
             let this = self.as_ref();
             let backend = this.rust().backend.as_ref().unwrap();
             async_io::block_on(async {
-                if start {
-                    backend.start_mount(&name).await
-                } else {
-                    backend.stop_mount(&name).await
+                match action {
+                    MountAction::Start => backend.start_mount(&name).await,
+                    MountAction::Stop => backend.stop_mount(&name).await,
+                    MountAction::Restart => backend.restart_mount(&name).await,
                 }
             })
         };
         if let Err(e) = result {
-            let verb = if start { "start" } else { "stop" };
+            let verb = action.verb();
             tracing::error!(error = %e, mount = %name, "{verb} failed");
             self.as_mut().set_error_string(QString::from(
                 format!("Couldn’t {verb} “{name}”. {e}").as_str(),

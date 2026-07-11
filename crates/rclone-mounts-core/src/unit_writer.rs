@@ -226,6 +226,12 @@ fn build_exec_start(mount: &Mount, ctx: &Context, mountpoint: &str) -> String {
     if mount.options.read_only {
         parts.push("--read-only".into());
     }
+    if mount.options.vfs_refresh {
+        parts.push("--vfs-refresh".into());
+    }
+    if let Some(secs) = mount.options.poll_interval_secs {
+        parts.push(format!("--poll-interval={secs}s"));
+    }
 
     parts.join(" ")
 }
@@ -359,6 +365,8 @@ mod tests {
             dir_cache_time_secs: Some(60),
             umask: Some(0o077),
             read_only: true,
+            vfs_refresh: true,
+            poll_interval_secs: Some(30),
         };
         let unit = render(&m, &user_ctx()).unwrap();
         assert!(unit.contains("--vfs-cache-mode=full"));
@@ -366,6 +374,28 @@ mod tests {
         assert!(unit.contains("--dir-cache-time=60s"));
         assert!(unit.contains("--umask=077"));
         assert!(unit.contains("--read-only"));
+        assert!(unit.contains("--vfs-refresh"));
+        assert!(unit.contains("--poll-interval=30s"));
+    }
+
+    #[test]
+    fn vfs_refresh_omitted_by_default() {
+        let unit = render(&sample_mount(), &user_ctx()).unwrap();
+        assert!(!unit.contains("--vfs-refresh"));
+    }
+
+    #[test]
+    fn poll_interval_omitted_by_default() {
+        let unit = render(&sample_mount(), &user_ctx()).unwrap();
+        assert!(!unit.contains("--poll-interval"));
+    }
+
+    #[test]
+    fn poll_interval_zero_means_explicitly_disabled() {
+        let mut m = sample_mount();
+        m.options.poll_interval_secs = Some(0);
+        let unit = render(&m, &user_ctx()).unwrap();
+        assert!(unit.contains("--poll-interval=0s"));
     }
 
     #[test]

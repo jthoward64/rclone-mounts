@@ -66,6 +66,19 @@ pub struct KindSchema {
     /// duplicate filenames within a directory (a FUSE mount can only show
     /// one entry per name).
     pub duplicate_files: bool,
+    /// Whether this backend supports rclone's `--poll-interval` change
+    /// notifications, i.e. it can tell rclone about remote changes instead
+    /// of relying purely on `--dir-cache-time` expiring. Lets the KCM default
+    /// new mounts of this kind to a much longer directory-cache time (the
+    /// backend will still notice changes promptly via polling) instead of
+    /// rclone's plain expiry-only default.
+    ///
+    /// Only `drive` is modeled as a `SourceKind` today, so it's the only
+    /// `true` here. rclone also supports polling on: Dropbox, OneDrive, Box
+    /// (stream-position event polling — not to be confused with `ListR`,
+    /// which it lacks), pCloud (diff long-polling), and Pixeldrain. Flip
+    /// this on for each as it's added as a `SourceKind`.
+    pub supports_polling: bool,
 }
 
 const fn text(key: &'static str, label: &'static str, placeholder: &'static str) -> FieldSchema {
@@ -224,6 +237,7 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         wizard_only: false,
         put_stream: true,
         duplicate_files: false,
+        supports_polling: false,
     },
     KindSchema {
         tag: "webdav",
@@ -234,6 +248,7 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         // Real value is vendor-dependent — see the field doc comment above.
         put_stream: false,
         duplicate_files: false,
+        supports_polling: false,
     },
     KindSchema {
         tag: "sftp",
@@ -243,6 +258,7 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         wizard_only: false,
         put_stream: true,
         duplicate_files: false,
+        supports_polling: false,
     },
     KindSchema {
         tag: "ftp",
@@ -252,6 +268,7 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         wizard_only: false,
         put_stream: true,
         duplicate_files: false,
+        supports_polling: false,
     },
     KindSchema {
         tag: "drive",
@@ -261,6 +278,7 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         wizard_only: true,
         put_stream: true,
         duplicate_files: true,
+        supports_polling: true,
     },
     KindSchema {
         tag: "iclouddrive",
@@ -270,6 +288,7 @@ const KIND_SCHEMAS: &[KindSchema] = &[
         wizard_only: true,
         put_stream: false,
         duplicate_files: false,
+        supports_polling: false,
     },
 ];
 

@@ -41,6 +41,13 @@ pub trait Backend: Send + Sync {
     // the privileged systemd.
     async fn start_mount(&self, name: &str) -> Result<()>;
     async fn stop_mount(&self, name: &str) -> Result<()>;
+    /// Restart the mount's unit. There's no rclone remote-control API wired
+    /// up here (`rclone rc vfs/forget`) and no cross-platform way to signal
+    /// just the right rclone process (`SIGHUP` flushes its VFS dir cache but
+    /// requires finding the one PID that belongs to this unit) — a restart
+    /// is the reliable way to force a stale directory cache to drop
+    /// everything and re-list from the remote.
+    async fn restart_mount(&self, name: &str) -> Result<()>;
     /// systemd `ActiveState` for the mount's unit: `active`, `inactive`,
     /// `failed`, `activating`, …
     async fn mount_status(&self, name: &str) -> Result<String>;
@@ -393,6 +400,11 @@ impl Backend for LocalBackend {
         self.control.stop(&mount_unit_name(name)).await
     }
 
+    async fn restart_mount(&self, name: &str) -> Result<()> {
+        unit_writer::validate_name(name)?;
+        self.control.restart(&mount_unit_name(name)).await
+    }
+
     async fn mount_status(&self, name: &str) -> Result<String> {
         unit_writer::validate_name(name)?;
         self.control.active_state(&mount_unit_name(name)).await
@@ -586,6 +598,12 @@ impl Backend for HelperBackend {
     async fn stop_mount(&self, name: &str) -> Result<()> {
         let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
         let _: () = proxy.call("StopMount", &(name,)).await?;
+        Ok(())
+    }
+
+    async fn restart_mount(&self, name: &str) -> Result<()> {
+        let proxy = zbus::Proxy::new(&self.conn, HELPER_BUS, HELPER_PATH, HELPER_IFACE).await?;
+        let _: () = proxy.call("RestartMount", &(name,)).await?;
         Ok(())
     }
 

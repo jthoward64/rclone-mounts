@@ -114,6 +114,7 @@ Kirigami.ScrollablePage {
                     sources: root.sources
                     onStartRequested: root.backend.startMount(mount.name)
                     onStopRequested: root.backend.stopMount(mount.name)
+                    onRestartRequested: root.backend.restartMount(mount.name)
                     onEditRequested: root.editMountRequested(mount)
                     onRemoveRequested: root.backend.removeMount(mount.name)
                 }

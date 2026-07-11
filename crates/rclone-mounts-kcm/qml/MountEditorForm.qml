@@ -59,6 +59,12 @@ ColumnLayout {
     readonly property bool cacheTooLowForSource: !readOnlyBox.checked
         && !root.sourceCanStream
         && (cacheModeBox.currentValue === "off" || cacheModeBox.currentValue === "minimal")
+    // Whether this source's kind notices remote changes on its own via
+    // rclone's --poll-interval (Drive today; see KindSchema::supports_polling
+    // for the rest of the list rclone itself supports). Gates both the
+    // longer dir-cache default below and the poll-interval controls further
+    // down — meaningless, so hidden, on a kind that can't use them.
+    readonly property bool sourceSupportsPolling: root.helpers.kindSupportsPolling(root.sourceKind)
 
     // Common, human-meaningful umask presets — the octal form isn't
     // something most people can reason about at a glance. -1 is a sentinel
@@ -86,8 +92,22 @@ ColumnLayout {
         let o = (root.editing && root.editing.options) ? root.editing.options : root.helpers.defaultMountOptions;
         cacheModeBox.currentIndex = root.helpers.cacheModeIndex(o.cache_mode);
         readOnlyBox.checked = !!o.read_only;
+        vfsRefreshBox.checked = !!o.vfs_refresh;
         cacheSizeSlider.value = o.cache_max_size_mb ?? 0;
-        dirCacheSlider.value = o.dir_cache_time_secs ?? 0;
+        // A brand-new mount of a polling-capable kind starts with a long
+        // dir-cache time (the backend notices changes itself via polling,
+        // so there's no staleness cost); anything else — a new mount of any
+        // other kind, or an existing mount's own stored value — keeps
+        // whatever `o.dir_cache_time_secs` already says (null means "rclone
+        // default" for a plain new mount).
+        let defaultDirCacheSecs = (!root.editing && root.sourceSupportsPolling)
+            ? root.helpers.dirCachePollingDefaultSecs
+            : (o.dir_cache_time_secs ?? null);
+        dirCacheSlider.value = root.helpers.durationIndexFor(root.helpers.dirCacheSteps, defaultDirCacheSecs);
+        let pollSecs = o.poll_interval_secs ?? null;
+        pollEnabledBox.checked = pollSecs !== 0;
+        pollIntervalSlider.value = root.helpers.durationIndexFor(
+            root.helpers.pollIntervalSteps, pollSecs === 0 ? null : pollSecs);
         let umaskIdx = root.umaskPresets.findIndex(p => p.value === o.umask);
         if (umaskIdx >= 0) {
             umaskBox.currentIndex = umaskIdx;
@@ -119,8 +139,16 @@ ColumnLayout {
         let opts = {
             cache_mode: cacheModeBox.currentValue,
             read_only: readOnlyBox.checked,
+            vfs_refresh: vfsRefreshBox.checked,
             cache_max_size_mb: cacheSizeSlider.value === 0 ? null : cacheSizeSlider.value,
-            dir_cache_time_secs: dirCacheSlider.value === 0 ? null : dirCacheSlider.value,
+            dir_cache_time_secs: root.helpers.dirCacheSteps[dirCacheSlider.value].seconds,
+            // Not applicable at all on a non-polling source — leave the
+            // stored value alone (null == "no opinion", same as never having
+            // set it) rather than writing a 0 that would just be confusing
+            // if the source's kind ever changed.
+            poll_interval_secs: root.sourceSupportsPolling
+                ? (pollEnabledBox.checked ? root.helpers.pollIntervalSteps[pollIntervalSlider.value].seconds : 0)
+                : null,
             umask: root.customUmaskSelected ? parseInt(customUmaskField.text, 8) : umaskBox.currentValue
         };
         return {
@@ -250,17 +278,61 @@ ColumnLayout {
                 id: dirCacheSlider
                 Layout.fillWidth: true
                 from: 0
-                to: 3600
-                stepSize: 30
+                to: root.helpers.dirCacheSteps.length - 1
+                stepSize: 1
                 snapMode: QQC2.Slider.SnapAlways
                 onMoved: root.commitLive()
             }
             QQC2.Label {
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 6
-                text: dirCacheSlider.value === 0 ? i18n("rclone default") : i18n("%1 s", dirCacheSlider.value)
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 7
+                text: root.helpers.dirCacheSteps[dirCacheSlider.value].label
             }
             Kirigami.ContextualHelpButton {
-                toolTipText: i18n("How long a listing of a folder's contents is trusted before rclone re-checks the source. Longer means fewer requests but slower to notice changes made elsewhere.")
+                toolTipText: i18n("How long a listing of a folder's contents is trusted before rclone re-checks the source. Longer means fewer requests but slower to notice changes made elsewhere. A source that supports polling for changes (below) can safely use a much longer value.")
+            }
+        }
+        RowLayout {
+            Kirigami.FormData.label: i18n("Poll for changes:")
+            visible: cacheModeBox.currentValue !== "off" && root.sourceSupportsPolling
+            QQC2.Switch {
+                id: pollEnabledBox
+                onToggled: root.commitLive()
+            }
+            Kirigami.ContextualHelpButton {
+                toolTipText: i18n("This source can tell rclone about changes made elsewhere as they happen, instead of waiting for the directory cache above to expire. Turning this off relies on the directory cache alone — lower it if you do.")
+            }
+        }
+        RowLayout {
+            Kirigami.FormData.label: i18n("Poll interval:")
+            visible: cacheModeBox.currentValue !== "off" && root.sourceSupportsPolling && pollEnabledBox.checked
+            Layout.fillWidth: true
+            QQC2.Slider {
+                id: pollIntervalSlider
+                Layout.fillWidth: true
+                from: 0
+                to: root.helpers.pollIntervalSteps.length - 1
+                stepSize: 1
+                snapMode: QQC2.Slider.SnapAlways
+                onMoved: root.commitLive()
+            }
+            QQC2.Label {
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 7
+                text: root.helpers.pollIntervalSteps[pollIntervalSlider.value].label
+            }
+            Kirigami.ContextualHelpButton {
+                toolTipText: i18n("How often rclone checks this source for changes. Must stay well under the directory cache time above — the default is a safe choice for nearly every value on that slider.")
+            }
+        }
+        RowLayout {
+            Kirigami.FormData.label: i18n("On mount start:")
+            visible: cacheModeBox.currentValue !== "off"
+            QQC2.CheckBox {
+                id: vfsRefreshBox
+                text: i18n("Refresh the directory cache in the background")
+                onToggled: root.commitLive()
+            }
+            Kirigami.ContextualHelpButton {
+                toolTipText: i18n("Walks the whole remote right when the mount starts so folders show up instantly once you browse in — otherwise the first listing of each folder is fetched on demand. Best left off for very large remotes, since it means a burst of requests at every mount start.")
             }
         }
         QQC2.ComboBox {

@@ -16,9 +16,30 @@ pub enum CacheMode {
 pub struct MountOptions {
     pub cache_mode: CacheMode,
     pub cache_max_size_mb: Option<u64>,
+    /// `--dir-cache-time`. `None` omits the flag (rclone's own default: 5
+    /// minutes). The KCM defaults new mounts to something much longer than
+    /// that on backends whose `SourceKind::supports_polling()` is true — see
+    /// `MountEditorForm.qml` — since those backends notice remote changes via
+    /// `--poll-interval` rather than relying on this expiring.
     pub dir_cache_time_secs: Option<u64>,
     pub umask: Option<u32>,
     pub read_only: bool,
+    /// `--vfs-refresh`: recursively walk the whole remote in the background
+    /// right when the mount starts, to warm the directory cache before the
+    /// user's first `ls`. Off by default — on a large remote this means a
+    /// burst of listing requests at every login/mount-start that most people
+    /// won't want by default.
+    #[serde(default)]
+    pub vfs_refresh: bool,
+    /// `--poll-interval`. Only meaningful on a `supports_polling` backend.
+    /// `None` omits the flag (rclone's own default: 1 minute). `Some(0)`
+    /// explicitly disables polling (`--poll-interval=0s`) — the KCM's
+    /// "poll for changes" switch being off. `Some(n)` for `n > 0` is a
+    /// user-chosen interval, always well under any `dir_cache_time_secs`
+    /// this app offers (the flag's one hard requirement: it must be smaller
+    /// than `--dir-cache-time`).
+    #[serde(default)]
+    pub poll_interval_secs: Option<u64>,
 }
 
 impl Default for MountOptions {
@@ -26,9 +47,13 @@ impl Default for MountOptions {
         Self {
             cache_mode: CacheMode::Writes,
             cache_max_size_mb: Some(2048),
-            dir_cache_time_secs: Some(30),
+            // rclone's own default (5 minutes) — this app previously shipped
+            // a much shorter 30s here, which was simply wrong.
+            dir_cache_time_secs: Some(300),
             umask: Some(0o077),
             read_only: false,
+            vfs_refresh: false,
+            poll_interval_secs: None,
         }
     }
 }
