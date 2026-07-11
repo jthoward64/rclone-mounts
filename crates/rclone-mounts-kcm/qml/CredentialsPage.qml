@@ -83,7 +83,7 @@ Kirigami.ScrollablePage {
                                 switch (row.status) {
                                 case "custom": return i18n("Custom credentials configured");
                                 case "default": return i18n("Using the built-in default");
-                                default: return i18n("Not set — sign-in will use rclone's own shared client");
+                                default: return i18n("Not set — users must provide their own client ID/secret to sign in");
                                 }
                             }
                             opacity: 0.7

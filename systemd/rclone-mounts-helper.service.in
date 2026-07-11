@@ -17,6 +17,10 @@ ReadWritePaths=/etc/systemd/system /etc/credstore.encrypted
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
+# systemd-creds seals system-scope credentials to the TPM when present; the
+# private /dev created by PrivateDevices= hides the real device node unless
+# explicitly allowed back in.
+DeviceAllow=/dev/tpmrm0 rw
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
