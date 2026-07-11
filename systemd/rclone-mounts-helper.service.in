@@ -17,10 +17,14 @@ ReadWritePaths=/etc/systemd/system /etc/credstore.encrypted
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
-# systemd-creds seals system-scope credentials to the TPM when present; the
-# private /dev created by PrivateDevices= hides the real device node unless
-# explicitly allowed back in.
+# systemd-creds seals system-scope credentials to the TPM when present, but
+# PrivateDevices= builds a private /dev containing only pseudo-devices — the
+# real /dev/tpmrm0 node is never in it, and DeviceAllow= alone only grants
+# cgroup-level access, it doesn't make the node visible. BindPaths= mounts
+# the actual device node back in; the "-" prefix keeps this a no-op (not a
+# unit failure) on hosts with no TPM.
 DeviceAllow=/dev/tpmrm0 rw
+BindPaths=-/dev/tpmrm0
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
