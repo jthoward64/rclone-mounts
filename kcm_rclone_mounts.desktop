@@ -2,7 +2,7 @@
 Type=Service
 TryExec=rclone
 Exec=kcmshell6 kcm_rclone_mounts
-Icon=folder-cloud-symbolic
+Icon=document-open-remote
 Categories=Qt;KDE;X-KDE-settings-network;
 X-KDE-ServiceTypes=KCModule
 X-KDE-Library=plasma/kcms/kcm_rclone_mounts

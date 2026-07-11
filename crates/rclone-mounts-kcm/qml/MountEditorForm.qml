@@ -328,12 +328,21 @@ ColumnLayout {
             visible: cacheModeBox.currentValue !== "off"
             QQC2.CheckBox {
                 id: vfsRefreshBox
+                Layout.fillWidth: true
                 text: i18n("Refresh the directory cache in the background")
                 onToggled: root.commitLive()
             }
             Kirigami.ContextualHelpButton {
                 toolTipText: i18n("Walks the whole remote right when the mount starts so folders show up instantly once you browse in — otherwise the first listing of each folder is fetched on demand. Best left off for very large remotes, since it means a burst of requests at every mount start.")
             }
+        }
+        QQC2.Label {
+            Kirigami.FormData.isSection: true
+            visible: cacheModeBox.currentValue !== "off"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            opacity: 0.7
+            text: i18n("Turning this off sends fewer requests to the server and can reduce RAM use, but folders may freeze or load slowly the first time you browse into them.")
         }
         QQC2.ComboBox {
             id: umaskBox

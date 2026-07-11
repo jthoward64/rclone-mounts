@@ -117,6 +117,7 @@ Kirigami.ScrollablePage {
                     onRestartRequested: root.backend.restartMount(mount.name)
                     onEditRequested: root.editMountRequested(mount)
                     onRemoveRequested: root.backend.removeMount(mount.name)
+                    leftPadding: Kirigami.Units.gridUnit + Kirigami.Units.smallSpacing
                 }
             }
             Component {

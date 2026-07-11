@@ -379,8 +379,10 @@ mod tests {
     }
 
     #[test]
-    fn vfs_refresh_omitted_by_default() {
-        let unit = render(&sample_mount(), &user_ctx()).unwrap();
+    fn vfs_refresh_omitted_when_disabled() {
+        let mut m = sample_mount();
+        m.options.vfs_refresh = false;
+        let unit = render(&m, &user_ctx()).unwrap();
         assert!(!unit.contains("--vfs-refresh"));
     }
 

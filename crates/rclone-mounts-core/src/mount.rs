@@ -26,9 +26,12 @@ pub struct MountOptions {
     pub read_only: bool,
     /// `--vfs-refresh`: recursively walk the whole remote in the background
     /// right when the mount starts, to warm the directory cache before the
-    /// user's first `ls`. Off by default — on a large remote this means a
-    /// burst of listing requests at every login/mount-start that most people
-    /// won't want by default.
+    /// user's first `ls`. On by default, since most people prefer instant
+    /// folder listings over the alternative — fewer requests and lower RAM
+    /// use, at the cost of the first browse into each folder being slow.
+    /// A saved mount from before this field existed loads as `false` (serde's
+    /// per-field default), not this struct's default, so existing mounts keep
+    /// their prior (off) behavior.
     #[serde(default)]
     pub vfs_refresh: bool,
     /// `--poll-interval`. Only meaningful on a `supports_polling` backend.
@@ -52,7 +55,7 @@ impl Default for MountOptions {
             dir_cache_time_secs: Some(300),
             umask: Some(0o077),
             read_only: false,
-            vfs_refresh: false,
+            vfs_refresh: true,
             poll_interval_secs: None,
         }
     }

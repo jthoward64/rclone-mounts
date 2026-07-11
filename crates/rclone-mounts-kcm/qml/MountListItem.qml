@@ -28,7 +28,6 @@ QQC2.ItemDelegate {
     contentItem: RowLayout {
         // Indented so the row visually reads as belonging to the source
         // section above it.
-        Item { implicitWidth: Kirigami.Units.gridUnit }
         Kirigami.Icon {
             implicitWidth: Kirigami.Units.iconSizes.small
             implicitHeight: Kirigami.Units.iconSizes.small
@@ -64,8 +63,8 @@ QQC2.ItemDelegate {
             }
         }
         QQC2.ToolButton {
-            icon.name: "media-playback-start-symbolic"
-            text: i18n("Start")
+            icon.name: "media-mount"
+            text: i18n("Mount")
             display: QQC2.ToolButton.IconOnly
             visible: root.mount.applied && !root.helpers.isRunning(root.mount.active)
             QQC2.ToolTip.text: text
@@ -73,8 +72,8 @@ QQC2.ItemDelegate {
             onClicked: root.startRequested()
         }
         QQC2.ToolButton {
-            icon.name: "media-playback-stop-symbolic"
-            text: i18n("Stop")
+            icon.name: "media-eject"
+            text: i18n("Unmount")
             display: QQC2.ToolButton.IconOnly
             visible: root.helpers.isRunning(root.mount.active)
             QQC2.ToolTip.text: text

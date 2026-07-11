@@ -58,12 +58,12 @@ QtObject {
     // Map a systemd ActiveState (plus our "unsaved" sentinel) to UI bits.
     function statusIcon(active) {
         switch (active) {
-        case "active": return "emblem-success-symbolic";
+        case "active": return "state-ok";
         case "activating":
-        case "deactivating": return "view-refresh-symbolic";
-        case "failed": return "emblem-error-symbolic";
-        case "inactive": return "media-playback-stopped-symbolic";
-        case "unsaved": return "document-save-symbolic";
+        case "deactivating": return "state-sync";
+        case "failed": return "state-error";
+        case "inactive": return "state-offline";
+        case "unsaved": return "state-information";
         default: return "dialog-question-symbolic";
         }
     }
@@ -110,7 +110,7 @@ QtObject {
         cache_max_size_mb: 2048,
         umask: 63,
         read_only: false,
-        vfs_refresh: false
+        vfs_refresh: true
     })
 
     function cacheModeIndex(value) {
