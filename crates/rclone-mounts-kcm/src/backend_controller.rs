@@ -469,6 +469,16 @@ fn drain_auto_answerable(
                     Err(e) => DriverStep::Error(e.to_string()),
                 };
             }
+            // Almost no one setting up a personal Drive mount wants Team
+            // Drive scoping, and there's no UI for this yes/no question —
+            // answer "no" so sign-in proceeds straight to the ordinary My
+            // Drive remote.
+            DriverStep::NeedInput { state, prompt } if prompt.looks_like_team_drive_choice() => {
+                step = match driver.continue_with(&state, "false") {
+                    Ok(s) => s,
+                    Err(e) => DriverStep::Error(e.to_string()),
+                };
+            }
             other => return other,
         }
     }

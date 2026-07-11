@@ -52,6 +52,14 @@ impl DriverPrompt {
     pub fn looks_like_local_browser_choice(&self) -> bool {
         self.name == "config_is_local"
     }
+
+    /// Drive's interactive config always asks this after OAuth completes:
+    /// "Configure this as a Shared Drive (Team Drive)?" — a yes/no question
+    /// this app has no UI for (the generic need-input form is a single text
+    /// field meant for codes), so it must be auto-answered rather than shown.
+    pub fn looks_like_team_drive_choice(&self) -> bool {
+        self.name == "config_change_team_drive"
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +302,17 @@ mod tests {
                 assert!(!prompt.is_password);
                 assert!(prompt.looks_like_local_browser_choice());
             }
+            other => panic!("expected NeedInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_team_drive_prompt() {
+        let json = r#"{"State":"*teamdrive,,","Option":{"Name":"config_change_team_drive","Help":"Configure this as a Shared Drive (Team Drive)?","IsPassword":false},"Error":""}"#;
+        let scratch = scratch_with("");
+        let step = DriverStep::from_stdout(json, scratch.path(), "gd").unwrap();
+        match step {
+            DriverStep::NeedInput { prompt, .. } => assert!(prompt.looks_like_team_drive_choice()),
             other => panic!("expected NeedInput, got {other:?}"),
         }
     }

@@ -285,7 +285,7 @@ KCM.AbstractKCM {
         id: sourceAddWizard
         backend: backendController
         helpers: uiHelpers
-        onWizardHandoff: (kind, editing) => sourceWizard.openFor(kind, editing)
+        onWizardHandoff: (kind, editing, name) => sourceWizard.openFor(kind, editing, name)
     }
 
     // --- Interactive source wizard (Google Drive OAuth, iCloud 2FA) -------

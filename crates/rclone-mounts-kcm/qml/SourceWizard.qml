@@ -29,10 +29,14 @@ Kirigami.OverlaySheet {
     // authenticate with.
     readonly property bool driveNeedsOwnCreds: kind === "drive" && !backend.providerDefaultAvailable("drive")
 
-    function openFor(kindTag, source) {
+    // `prefillName` carries over whatever the user already typed into the
+    // add-source dialog's own Name field before handing off to this wizard
+    // — without it, the field would just reappear empty and make them type
+    // the name a second time.
+    function openFor(kindTag, source, prefillName) {
         kind = kindTag;
         editing = source;
-        nameField.text = source ? source.display_name : "";
+        nameField.text = source ? source.display_name : (prefillName || "");
         appleIdField.text = "";
         applePasswordField.text = "";
         driveClientIdField.text = "";

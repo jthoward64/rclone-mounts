@@ -19,7 +19,7 @@ KirigamiDialogs.Dialog {
     required property var backend
     required property var helpers
 
-    signal wizardHandoff(string kind, var editing)
+    signal wizardHandoff(string kind, var editing, string name)
 
     property int step: 0
     readonly property string chosenKind: kindBox.currentValue ?? ""
@@ -37,8 +37,9 @@ KirigamiDialogs.Dialog {
         if (root.step === 0) {
             if (!root.kindSupported) {
                 let kind = root.chosenKind;
+                let name = nameField.text.trim();
                 root.close();
-                root.wizardHandoff(kind, null);
+                root.wizardHandoff(kind, null, name);
                 return;
             }
             root.step = 1;
